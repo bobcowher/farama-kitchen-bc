@@ -4,6 +4,7 @@ import gymnasium as gym
 import gymnasium_robotics  # registers FrankaKitchen-v1; no longer automatic in gymnasium 1.x
 import numpy as np
 from buffer import ReplayBuffer
+from dataset import DatasetShard
 import datetime
 # from agent import Agent
 from gym_robotics_custom import RoboGymObservationWrapper
@@ -14,7 +15,7 @@ from controller import Controller
 
 if __name__ == '__main__':
 
-    replay_buffer_size = 10000000
+    replay_buffer_size = 1000
     episodes = 10
     warmup = 20
     batch_size = 64
@@ -31,17 +32,42 @@ if __name__ == '__main__':
     env_name = "FrankaKitchen-v1"
     exploration_scaling_factor=0.01
 
-    # task = 'microwave'
-    # task = 'kettle'
-    # task = "top burner"
     task = "hinge cabinet"
+    task_description = "Open the cabinet second from the left"
+
+    # The only seven tasks the env accepts; anything else raises at gym.make.
+    # Swap both lines together. Descriptions are placeholders in the env's own
+    # terms -- reword them to match how you'd phrase the instruction.
+    # "travel" is how far past the success threshold the object has to move,
+    # so it roughly ranks how long a demo takes.
+    #
+    # task = "slide cabinet"
+    # task_description = "Slide the cabinet door open"          # travel 0.07
+    #
+    # task = "kettle"
+    # task_description = "Move the kettle to the top left burner"  # travel 0.11
+    #
+    # task = "light switch"
+    # task_description = "Turn on the overhead light switch"    # travel 0.39
+    #
+    # task = "microwave"
+    # task_description = "Open the microwave door"              # travel 0.45
+    #
+    # task = "bottom burner"
+    # task_description = "Turn the oven knob for the bottom left burner"  # 0.58
+    #
+    # task = "top burner"
+    # task_description = "Turn the oven knob for the top left burner"     # 0.62
+    #
+    # task = "hinge cabinet"
+    # task_description = "Open the cabinet second from the left"  # travel 1.15
+
     task_no_spaces = task.replace(" ", "_")
+
 
     env = gym.make(env_name, max_episode_steps=max_episode_steps, tasks_to_complete=[task], render_mode='human')
 
     env = RoboGymObservationWrapper(env, goal=task)
-
-    print(env.env.env.env.env.model.opt.gravity)
 
     # print(f"Obervation space: {env.observation_space}")
     print(f"Action space: {env.action_space}")
@@ -50,21 +76,21 @@ if __name__ == '__main__':
 
     state_size = state.shape[0]
 
-    memory = ReplayBuffer(replay_buffer_size, input_size=state_size, n_actions=env.action_space.shape[0])
-
-    memory.load_from_csv(filename=f'checkpoints/human_memory_{task_no_spaces}.npz')
-    
-    starting_memory_size = memory.mem_ctr
-    
-    print(f"Starting memory size is {starting_memory_size}")
-
     controller = Controller()
-
 
     while True: # Run until interrupted
         episode_steps = 0
         done = False
         state, info = env.reset()
+
+        memory = DatasetShard(replay_buffer_size, 
+                              input_size=state_size, 
+                              n_actions=env.action_space.shape[0],
+                              task_name=task_no_spaces,
+                              task_description=task_description) 
+        starting_memory_size = 0 # TODO: Come back and make this dynamic. We have the technology, we can rebuild the data
+
+        reward = 0
 
         while not done and episode_steps < max_episode_steps:
             for event in pygame.event.get():
@@ -87,7 +113,8 @@ if __name__ == '__main__':
             time.sleep(0.05)
         
 
-        memory.save_to_csv(filename=f'checkpoints/human_memory_{task_no_spaces}.npz')
+        if reward > 0:
+            memory.save_to_csv()
 
 
 

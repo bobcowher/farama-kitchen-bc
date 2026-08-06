@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 
 class DatasetShard():
-    def __init__(self, max_size, input_size, n_actions, sad_robot=False, 
+    def __init__(self, max_size, input_size, n_actions, task_name, task_description, 
                  augment_data=False, augment_rewards=False, expert_data_ratio=0.1,
                  augment_noise_ratio=0.1):
         self.mem_size = max_size
@@ -13,13 +13,8 @@ class DatasetShard():
         self.action_memory = np.zeros((self.mem_size, n_actions))
         self.reward_memory = np.zeros(self.mem_size)
         self.terminal_memory = np.zeros(self.mem_size, dtype=bool)
-        self.sad_robot = sad_robot
-        self.augment_data = augment_data
-        self.augment_rewards = augment_rewards
-        self.augment_noise_ratio = augment_noise_ratio # Only relevant if augment rewards is set. 
-        self.task_name = "open_cabinet"
-        
-
+        self.task_description = task_description
+        self.task_name = task_name
 
 
 
@@ -49,23 +44,6 @@ class DatasetShard():
         rewards = self.reward_memory[batch]
         dones = self.terminal_memory[batch]
 
-        if self.augment_data:
-            # Compute dynamic noise levels based on the average absolute values
-            state_noise_std = self.augment_noise_ratio * np.mean(np.abs(states))
-            action_noise_std = self.augment_noise_ratio * np.mean(np.abs(actions))
-            reward_noise_std = self.augment_noise_ratio * np.mean(np.abs(rewards))
-
-            # Adding dynamic noise to states, actions, and rewards
-            states = states + np.random.normal(0, state_noise_std, states.shape)
-            actions = actions + np.random.normal(0, action_noise_std, actions.shape)
-            # rewards = rewards + np.random.normal(0, reward_noise_std, rewards.shape)
-
-        if self.augment_rewards:
-            rewards = rewards * 100
-
-            if self.sad_robot:
-                rewards = rewards - 1
-
         return states, actions, rewards, states_, dones
 
     def save_to_csv(self):
@@ -78,9 +56,13 @@ class DatasetShard():
         os.makedirs(directory, exist_ok=True)
 
         np.savez(filename,
+                 task_description=self.task_description,
                  state=self.state_memory[:self.mem_ctr],
                  action=self.action_memory[:self.mem_ctr],
                  reward=self.reward_memory[:self.mem_ctr],
                  next_state=self.new_state_memory[:self.mem_ctr],
                  done=self.terminal_memory[:self.mem_ctr])
+        print("-" * 20)
         print(f"Saved {filename}")
+        print("-" * 20)
+
