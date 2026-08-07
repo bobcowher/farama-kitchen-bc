@@ -1,3 +1,4 @@
+import time
 import numpy as np
 import pygame
 
@@ -12,6 +13,9 @@ import pygame
 # renumbers the buttons, so these would need re-measuring.
 #
 # Sticks report up as negative and right as positive on both sticks.
+
+ABORT_BUTTON = 4  # Star
+QUIT_BUTTON = 9   # Minus
 
 
 class Controller:
@@ -86,3 +90,31 @@ class Controller:
                 action[8] = 1.0
 
         return action
+
+    def abort_pressed(self):
+        """Star cancels the episode. Not used by get_action, so it stays free."""
+        return bool(self.joystick.get_button(ABORT_BUTTON))
+
+    def quit_pressed(self):
+        """Minus ends the session. Not used by get_action, so it stays free."""
+        return bool(self.joystick.get_button(QUIT_BUTTON))
+
+    def wait_for_release(self):
+        """Block until nothing is held, so the next episode starts clean."""
+        while any(self.joystick.get_button(i) for i in range(self.joystick.get_numbuttons())):
+            pygame.event.pump()
+            time.sleep(0.05)
+
+    def keep_demo(self):
+        """Ask whether to save the episode just finished. B keeps, X discards."""
+        print("Demo complete. B to keep, X to discard.")
+        self.wait_for_release()
+        while True:
+            pygame.event.pump()
+            if self.joystick.get_button(0):    # B
+                self.wait_for_release()
+                return True
+            elif self.joystick.get_button(2):  # X
+                self.wait_for_release()
+                return False
+            time.sleep(0.05)

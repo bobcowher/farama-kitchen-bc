@@ -2,8 +2,7 @@
 
     python view_run.py dataset/hinge_cabinet/shard_2026_08_06_21_42_43.npz
 
-space  play/pause      left/right (or a/d)  step one frame
-r      restart         q or Esc             quit
+space  play/pause      r  restart      q or Esc  quit
 """
 
 import os
@@ -14,10 +13,6 @@ import numpy as np
 
 FPS = 20  # matches the collector's time.sleep(0.05)
 
-# cv2 reports arrow keys differently depending on the GUI backend, so accept
-# every encoding we might see, plus a/d as a guaranteed fallback.
-PREV_KEYS = {65361, 2424832, 81, ord('a')}
-NEXT_KEYS = {65363, 2555904, 83, ord('d')}
 QUIT_KEYS = {ord('q'), 27}
 
 
@@ -64,7 +59,7 @@ def main():
         print("predates the done fix and stores the old SAC bootstrap mask")
         print("(1 = keep going, 0 = terminal). Read the raw value inverted.")
     print("=" * 72)
-    print("space play/pause   left/right (or a/d) step   r restart   q quit")
+    print("space play/pause   r restart   q quit")
     print()
 
     window = os.path.basename(path)
@@ -107,10 +102,6 @@ def main():
             playing = not playing
         elif key == ord('r'):
             i, playing = 0, True
-        elif key in PREV_KEYS:
-            i, playing = max(0, i - 1), False
-        elif key in NEXT_KEYS:
-            i, playing = min(n - 1, i + 1), False
         elif playing:
             i = min(n - 1, i + 1)
 

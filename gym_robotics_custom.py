@@ -112,3 +112,52 @@ class VLAObservationWrapper(ObservationWrapper):
             "joint_vel": robot_obs[9:18].astype(np.float32),
         }
 
+
+class ArmHomeWrapper(Wrapper):
+    """Drives the arm back to its start pose without touching the objects.
+
+    The kitchen's reset_model is deterministic -- every episode starts from one
+    literal qpos -- so a policy trained on demos only ever sees one arm pose at
+    step 0. Rather than teach it to start from anywhere, we make the world keep
+    its promise: after a task is done, walk the arm home and leave the scene as
+    the task left it. The training distribution then matches inference.
+
+    This is a scripted move, not a learned one. It steps the env with a
+    proportional joint-velocity command, so the motion is physical: the sim
+    resolves contacts, the camera sees it, and the same routine would port to a
+    real arm. Teleporting qpos would be faster and would also let the gripper
+    pass through a door it had just opened.
+
+    The gripper fingers are homed too, which means anything held gets released.
+    That is what a "ready for the next task" pose should do.
+
+    Homing steps are real env steps, so they count against max_episode_steps.
+    Chained sessions need that raised.
+    """
+
+    def __init__(self, env, kp=5.0, tolerance=0.02, max_steps=150):
+        super().__init__(env)
+        # Snapshot now: reset_model reads this attribute every reset, so anything
+        # that perturbs start poses later would otherwise move our target too.
+        self.home = np.array(env.unwrapped.robot_env.init_qpos[:9], dtype=float)
+        self.kp = kp
+        self.tolerance = tolerance
+        self.max_steps = max_steps
+
+    def return_to_home(self):
+        """Step until the arm is home. Returns (observation, steps_taken)."""
+        env = self.unwrapped
+        # act_rng converts a joint velocity in rad/s into the [-1, 1] action.
+        act_rng = env.robot_env.act_rng[:9]
+        observation = None
+
+        for step in range(self.max_steps):
+            error = self.home - env.data.qpos[:9]
+            if np.abs(error).max() < self.tolerance:
+                return observation, step
+            action = np.clip(self.kp * error / act_rng, -1.0, 1.0)
+            observation, _, _, _, _ = self.env.step(action)
+
+        print(f"return_to_home gave up after {self.max_steps} steps, "
+              f"worst joint still {np.abs(self.home - env.data.qpos[:9]).max():.3f} rad off")
+        return observation, self.max_steps
