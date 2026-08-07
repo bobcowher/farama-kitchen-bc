@@ -102,7 +102,7 @@ if __name__ == '__main__':
             action = controller.get_action()
             if(action is not None):
                 next_state, reward, done, _, _ = env.step(action)
-                memory.store_transition(state, action, reward, next_state, done)
+                memory.store_transition(state, action, reward, done)
                 print(f"Episode step: {episode_steps} Reward: , {reward} Successfully added {memory.mem_ctr - starting_memory_size} steps to memory. Total: {memory.mem_ctr}")
                 state = next_state
                 episode_steps += 1
