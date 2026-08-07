@@ -7,7 +7,7 @@ from buffer import ReplayBuffer
 from dataset import DatasetShard
 import datetime
 # from agent import Agent
-from gym_robotics_custom import RoboGymObservationWrapper
+from gym_robotics_custom import HeldSetpointWrapper, VLAObservationWrapper
 from torch.utils.tensorboard import SummaryWriter
 import pygame
 from controller import Controller
@@ -29,6 +29,7 @@ if __name__ == '__main__':
     hidden_size = 512
     learning_rate = 0.0001
     max_episode_steps=500 # max episode steps
+    image_size = 640 # square camera frame per view; downsample at train time
     env_name = "FrankaKitchen-v1"
     exploration_scaling_factor=0.01
 
@@ -67,14 +68,11 @@ if __name__ == '__main__':
 
     env = gym.make(env_name, max_episode_steps=max_episode_steps, tasks_to_complete=[task], render_mode='human')
 
-    env = RoboGymObservationWrapper(env, goal=task)
+    env = HeldSetpointWrapper(env)
+    env = VLAObservationWrapper(env, image_size=image_size)
 
-    # print(f"Obervation space: {env.observation_space}")
+    print(f"Observation space: {env.observation_space}")
     print(f"Action space: {env.action_space}")
-
-    state, info = env.reset()
-
-    state_size = state.shape[0]
 
     controller = Controller()
 
@@ -83,11 +81,8 @@ if __name__ == '__main__':
         done = False
         state, info = env.reset()
 
-        memory = DatasetShard(replay_buffer_size, 
-                              input_size=state_size, 
-                              n_actions=env.action_space.shape[0],
-                              task_name=task_no_spaces,
-                              task_description=task_description) 
+        memory = DatasetShard(task_name=task_no_spaces,
+                              task_description=task_description)
         starting_memory_size = 0 # TODO: Come back and make this dynamic. We have the technology, we can rebuild the data
 
         reward = 0
