@@ -1,7 +1,5 @@
-import mujoco
 import numpy as np
 from gymnasium import ObservationWrapper, Wrapper, spaces
-from gymnasium_robotics.utils.mujoco_utils import MujocoModelNames
 from PIL import Image
 
 
@@ -39,55 +37,11 @@ class HeldSetpointWrapper(Wrapper):
         return result
 
 
-# Wrist camera geometry, all in the panda0_link7 frame. The gripper points along
-# +Z: hand at z=0.107, fingers at z=0.1654, TCP at z=0.210.
-#
-# Measured mesh extents of the arm's own bodies in that frame:
-#     link7 disc   z 0.052..0.107   max radius 0.090
-#     hand         z 0.081..0.173   max radius 0.104
-#     fingers      z 0.166..0.260   max radius 0.032
-#
-# That 0.104 radius is why earlier guesses at this pose all failed. Anything
-# mounted closer to the axis than the hand envelope is looking into the back of
-# the hand, so the fingers never appear no matter how the camera is rotated.
-# The camera has to sit outside the hand, not behind it.
-#
-# The fingers slide along the hand frame's Y axis, which chain.xml rotates -45
-# degrees about link7's Z. Mounting on the perpendicular axis puts the camera
-# looking between the fingers rather than through one of them.
-_HAND_YAW = -np.pi / 4  # hand/finger frame rotation about link7 Z, per chain.xml
-WRIST_MOUNT_AXIS = np.array([np.cos(_HAND_YAW), np.sin(_HAND_YAW), 0.0])
-WRIST_CAM_RADIUS = 0.12  # just clear of the 0.104 hand envelope
-WRIST_CAM_HEIGHT = 0.06
-WRIST_CAM_TARGET = np.array([0.0, 0.0, 0.28])  # just past the fingertips at 0.260
-WRIST_CAM_FOVY = 75
-
-
-def _look_at(eye, target, up):
-    """Camera quaternion aiming `eye` at `target`.
-
-    MuJoCo cameras look down their own -Z with +Y as image up, so `up` must stay
-    well away from the view axis or the frame is ill-conditioned -- picking it
-    parallel to the aim direction is an easy way to get a silently wrong pose.
-    """
-    forward = target - eye
-    forward = forward / np.linalg.norm(forward)
-    z = -forward
-    x = np.cross(up, z)
-    norm = np.linalg.norm(x)
-    assert norm > 0.2, f"up vector too close to the view axis (|x| = {norm:.3f})"
-    x = x / norm
-    y = np.cross(z, x)
-    quat = np.zeros(4)
-    mujoco.mju_mat2Quat(quat, np.column_stack([x, y, z]).flatten())
-    return quat
-
-
 class VLAObservationWrapper(ObservationWrapper):
-    """Two camera views plus proprioception, for a vision-language-action policy.
+    """A camera view plus proprioception, for a vision-language-action policy.
 
-    Returns {"camera_scene", "camera_wrist", "joint_pos", "joint_vel"}, matching
-    the camera/joint_pos/joint_vel split used by the other buffers in this repo.
+    Returns {"camera_scene", "joint_pos", "joint_vel"}, matching the
+    camera/joint_pos/joint_vel split used by the other buffers in this repo.
 
     Object poses are deliberately left out. The old wrapper concatenated the
     env's achieved_goal and desired_goal onto a flat joint-state vector, which
@@ -102,68 +56,48 @@ class VLAObservationWrapper(ObservationWrapper):
     model's own 'left_cap' and 'right_cap' cameras point at a countertop and a
     cabinet face; neither shows the arm, so neither is used.
 
-    camera_wrist does not exist in the shipped model, so it is injected here.
+    There is no wrist view. One was built and aimed (see the wrist-camera
+    branch), but this environment is a fixed scene with a fixed viewpoint and
+    coarse tasks -- doors, knobs, a kettle -- so the conditions that make
+    eye-in-hand views pay off in the literature mostly do not apply here. It
+    doubled storage for a benefit this setup was unlikely to collect.
     """
 
     def __init__(self, env, image_size=640):
         super().__init__(env)
         self.image_size = image_size
-        self._add_wrist_camera(env.unwrapped, image_size)
+        self._set_render_size(env.unwrapped, image_size)
         self.observation_space = spaces.Dict({
             "camera_scene": spaces.Box(0, 255, (image_size, image_size, 3), np.uint8),
-            "camera_wrist": spaces.Box(0, 255, (image_size, image_size, 3), np.uint8),
             "joint_pos": spaces.Box(-np.inf, np.inf, (9,), np.float32),
             "joint_vel": spaces.Box(-np.inf, np.inf, (9,), np.float32),
         })
 
-    def _add_wrist_camera(self, kitchen, image_size):
-        """Recompile the model with a camera on the wrist and swap it in.
+    def _set_render_size(self, kitchen, image_size):
+        """Raise the render resolution above the env's 480 default.
 
-        Cameras cannot be added to an already-compiled MjModel, and the asset
-        XML lives in site-packages, so the model is rebuilt from spec here.
-        Adding a camera changes no state layout -- nq, nv and nu are untouched --
-        so swapping model and data on the live env is safe. It has to happen
-        before anything renders, because the viewers capture model/data when
+        Must run before anything renders, because the viewers read these when
         they are first created.
         """
         robot = kitchen.robot_env
         renderer = robot.mujoco_renderer
         assert not renderer._viewers, (
-            "wrist camera must be injected before the first render")
+            "render size must be set before the first render")
 
-        spec = mujoco.MjSpec.from_file(robot.fullpath)
-        cam_pos = (WRIST_MOUNT_AXIS * WRIST_CAM_RADIUS
-                   + np.array([0.0, 0.0, WRIST_CAM_HEIGHT]))
-        cam = spec.body("panda0_link7").add_camera()
-        cam.name = "wrist"
-        cam.pos = cam_pos
-        cam.quat = _look_at(cam_pos, WRIST_CAM_TARGET, WRIST_MOUNT_AXIS)
-        cam.fovy = WRIST_CAM_FOVY
-
-        model = spec.compile()
         # The offscreen viewer sizes itself from renderer.width/height, not from
         # offwidth, so both have to be raised or we would upscale a 480 render.
         # This also enlarges the teleop window, which is no bad thing.
         robot.width = robot.height = image_size
         renderer.width = renderer.height = image_size
-        model.vis.global_.offwidth = image_size
-        model.vis.global_.offheight = image_size
-        data = mujoco.MjData(model)
-
-        robot.model, robot.data = model, data
-        kitchen.model, kitchen.data = model, data
-        renderer.model, renderer.data = model, data
-        robot.model_names = MujocoModelNames(model)
+        kitchen.model.vis.global_.offwidth = image_size
+        kitchen.model.vis.global_.offheight = image_size
 
         self._renderer = renderer
-        self._scene_cam = -1  # free camera, per DEFAULT_CAMERA_CONFIG
-        self._wrist_cam = mujoco.mj_name2id(
-            model, mujoco.mjtObj.mjOBJ_CAMERA, "wrist")
 
-    def _grab(self, camera_id):
+    def _grab(self):
         # Renders offscreen through a second viewer, so this works even while
         # render_mode='human' is driving the teleop window.
-        self._renderer.camera_id = camera_id
+        self._renderer.camera_id = -1  # free camera, per DEFAULT_CAMERA_CONFIG
         frame = self._renderer.render("rgb_array")
         if frame.shape[0] != self.image_size or frame.shape[1] != self.image_size:
             frame = np.asarray(Image.fromarray(frame).resize(
@@ -173,8 +107,7 @@ class VLAObservationWrapper(ObservationWrapper):
     def observation(self, observation):
         robot_obs = observation["observation"]
         return {
-            "camera_scene": self._grab(self._scene_cam),
-            "camera_wrist": self._grab(self._wrist_cam),
+            "camera_scene": self._grab(),
             "joint_pos": robot_obs[:9].astype(np.float32),
             "joint_vel": robot_obs[9:18].astype(np.float32),
         }

@@ -6,14 +6,15 @@ class DatasetShard():
     """One collection run's worth of VLA transitions, saved as its own file.
 
     Appends rather than preallocating. The other buffers in this repo size a
-    uint8 arena up front, which works for small frames; two 640x640 views can't
-    be sized that way (replay_buffer_size would ask for petabytes).
+    uint8 arena up front, which works for small frames; 640x640 views can't be
+    sized that way (replay_buffer_size would ask for petabytes).
 
-    Frames are stored as raw uint8 RGB and zlib'd by savez_compressed, ~450 KiB
-    per timestep for both views at 640.
+    Frames are stored as raw uint8 RGB and zlib'd by savez_compressed, ~280 KiB
+    per timestep at 640, so roughly 145 GB for 300 demos across 7 tasks.
 
-    next_camera_* is not stored. It is the next step's frame by construction, so
-    keeping it would double the file for nothing; rebuild it at load time.
+    next_camera_scene is not stored. It is the next step's frame by
+    construction, so keeping it would double the file for nothing; rebuild it at
+    load time.
     """
 
     def __init__(self, task_name, task_description):
@@ -21,7 +22,6 @@ class DatasetShard():
         self.task_name = task_name
         self.task_description = task_description
         self.camera_scene_memory = []
-        self.camera_wrist_memory = []
         self.joint_pos_memory = []
         self.joint_vel_memory = []
         self.action_memory = []
@@ -35,7 +35,6 @@ class DatasetShard():
 
     def store_transition(self, state, action, reward, state_, done):
         self.camera_scene_memory.append(state["camera_scene"])
-        self.camera_wrist_memory.append(state["camera_wrist"])
         self.joint_pos_memory.append(state["joint_pos"])
         self.joint_vel_memory.append(state["joint_vel"])
         self.action_memory.append(action)
@@ -59,7 +58,6 @@ class DatasetShard():
                  task_name=self.task_name,
                  task_description=self.task_description,
                  camera_scene=np.stack(self.camera_scene_memory),
-                 camera_wrist=np.stack(self.camera_wrist_memory),
                  joint_pos=np.stack(self.joint_pos_memory),
                  joint_vel=np.stack(self.joint_vel_memory),
                  action=np.stack(self.action_memory),

@@ -29,7 +29,7 @@ if __name__ == '__main__':
     hidden_size = 512
     learning_rate = 0.0001
     max_episode_steps=500 # max episode steps
-    image_size = 640 # square camera frame per view; downsample at train time
+    image_size = 640 # square camera frame; downsample at train time
     env_name = "FrankaKitchen-v1"
     exploration_scaling_factor=0.01
 
