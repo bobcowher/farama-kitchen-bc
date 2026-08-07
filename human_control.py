@@ -3,7 +3,6 @@ import os
 import gymnasium as gym
 import gymnasium_robotics  # registers FrankaKitchen-v1; no longer automatic in gymnasium 1.x
 import numpy as np
-from buffer import ReplayBuffer
 from dataset import DatasetShard
 import datetime
 # from agent import Agent
@@ -81,7 +80,10 @@ if __name__ == '__main__':
         done = False
         state, info = env.reset()
 
-        memory = DatasetShard(task_name=task_no_spaces,
+        memory = DatasetShard(max_size=max_episode_steps,
+                              image_size=image_size,
+                              n_actions=env.action_space.shape[0],
+                              task_name=task_no_spaces,
                               task_description=task_description)
         starting_memory_size = 0 # TODO: Come back and make this dynamic. We have the technology, we can rebuild the data
 
@@ -100,8 +102,7 @@ if __name__ == '__main__':
             action = controller.get_action()
             if(action is not None):
                 next_state, reward, done, _, _ = env.step(action)
-                mask = 1 if episode_steps == max_episode_steps else float(not done)
-                memory.store_transition(state, action, reward, next_state, mask) 
+                memory.store_transition(state, action, reward, next_state, done)
                 print(f"Episode step: {episode_steps} Reward: , {reward} Successfully added {memory.mem_ctr - starting_memory_size} steps to memory. Total: {memory.mem_ctr}")
                 state = next_state
                 episode_steps += 1

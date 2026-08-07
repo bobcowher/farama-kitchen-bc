@@ -6,41 +6,12 @@ import pygame
 #   7    r_gripper_finger_joint
 #   8    l_gripper_finger_joint
 # Zero holds position, so releasing everything is a no-op rather than a snap home.
-
-# Indices below were measured on an 8BitDo pad in Switch mode, reporting as
-# "Pro Controller" (14 buttons, 4 axes, 1 hat). Changing the pad's input mode
+#
+# Button numbers below were measured on an 8BitDo pad in Switch mode, reporting
+# as "Pro Controller" (14 buttons, 4 axes, 1 hat). Changing the pad's input mode
 # renumbers the buttons, so these would need re-measuring.
 #
 # Sticks report up as negative and right as positive on both sticks.
-#
-# (axis index, action dim, sign)
-AXIS_MAP = (
-    (0, 0, -1.0),  # left stick horizontal  -> joint1
-    (1, 1, -1.0),  # left stick vertical    -> joint2  (up = +)
-    (3, 2, +1.0),  # right stick vertical   -> joint3  (up = -, opposite of left)
-    (2, 3, -1.0),  # right stick horizontal -> joint4
-)
-
-# button -> (action dim, value). Exactly one owner per dim per direction.
-BUTTON_MAP = {
-    0: (4, -1.0),  # B  -> joint5 -
-    2: (4, +1.0),  # X  -> joint5 +
-    6: (5, -1.0),  # R  -> joint6 -  wrist side-to-side tilt
-    5: (5, +1.0),  # L  -> joint6 +  wrist side-to-side tilt
-    7: (6, -1.0),  # L2 -> joint7 -
-    8: (6, +1.0),  # R2 -> joint7 +
-}
-
-# button -> gripper_closed state.
-GRIPPER_MAP = {
-    1: True,   # A -> close
-    3: False,  # Y -> open
-}
-
-# Unbound and free: button 4 (unidentified), 9 (Minus), 10 (Plus), 11-13,
-# and the whole D-pad, which reports as hat 0 and is not read at all.
-
-AXIS_DEADZONE = 0.1
 
 
 class Controller:
@@ -56,48 +27,62 @@ class Controller:
 
     def get_action(self):
         """
-        Map PlayStation controller input to the robot's action space.
+        Map controller input to the robot's action space.
 
         Returns None when nothing is being pressed, which tells the caller to
         skip the env step rather than advance the sim with a zero action.
         """
-        pygame.event.pump()
-
         action = np.zeros(9)
 
-        for axis, dim, sign in AXIS_MAP:
-            value = self.joystick.get_axis(axis) * sign
-            if abs(value) >= AXIS_DEADZONE:
-                action[dim] = value
-
-        pressed = [b for b in range(self.joystick.get_numbuttons())
-                   if self.joystick.get_button(b)]
-
-        # Accumulate so opposing directions cancel instead of one winning.
-        for button in pressed:
-            if button in BUTTON_MAP:
-                dim, value = BUTTON_MAP[button]
-                action[dim] += value
-                print(f"Button {button} pressed -> action[{dim}] {value:+.1f}")
-
         gripper_button_pressed = False
-        for button in pressed:
-            if button in GRIPPER_MAP:
-                self.gripper_closed = GRIPPER_MAP[button]
-                gripper_button_pressed = True
-                print(f"Button {button} pressed -> gripper "
-                      f"{'close' if self.gripper_closed else 'open'}")
 
-        if not action.any() and not gripper_button_pressed:
-            return None
+        # Left stick -> joint1 and joint2
+        action[0] = self.joystick.get_axis(0) * -1  # left stick horizontal
+        action[1] = self.joystick.get_axis(1) * -1  # left stick vertical
 
-        # Applied last and from stored state, so the gripper holds its position
-        # across frames and combines with arm motion.
-        if self.gripper_closed is True:
-            action[7] = -1.0  # Close gripper
-            action[8] = -1.0
-        elif self.gripper_closed is False:
-            action[7] = 1.0  # Open gripper
-            action[8] = 1.0
+        # Right stick -> joint3 and joint4
+        action[2] = self.joystick.get_axis(3)       # right stick vertical
+        action[3] = self.joystick.get_axis(2) * -1  # right stick horizontal
 
-        return np.clip(action, -1.0, 1.0)
+        if self.joystick.get_button(0):    # B
+            self.gripper_closed = True     # close gripper
+            gripper_button_pressed = True
+            print("Button 0 pressed")
+        elif self.joystick.get_button(1):  # A
+            action[4] = -1                 # joint5 -
+            print("Button 1 pressed")
+        elif self.joystick.get_button(2):  # X
+            self.gripper_closed = False    # open gripper
+            gripper_button_pressed = True
+            print("Button 2 pressed")
+        elif self.joystick.get_button(3):  # Y
+            action[4] = 1                  # joint5 +
+            print("Button 3 pressed")
+        elif self.joystick.get_button(5):  # L
+            action[5] = 1                  # joint6 +  wrist side-to-side tilt
+            print("Button 5 pressed")
+        elif self.joystick.get_button(6):  # R
+            action[5] = -1                 # joint6 -  wrist side-to-side tilt
+            print("Button 6 pressed")
+        elif self.joystick.get_button(7):  # L2
+            action[6] = -1                 # joint7 -
+            print("Button 7 pressed")
+        elif self.joystick.get_button(8):  # R2
+            action[6] = 1                  # joint7 +
+            print("Button 8 pressed")
+
+        mask = np.abs(action) >= 0.1
+        action = action * mask
+        action = np.where(action == -0.0, 0.0, action)
+
+        if np.all(action == 0) and gripper_button_pressed == False:
+            action = None
+        else:
+            if self.gripper_closed == True:
+                action[7] = -1.0  # Close gripper
+                action[8] = -1.0
+            elif self.gripper_closed == False:
+                action[7] = 1.0   # Open gripper
+                action[8] = 1.0
+
+        return action
