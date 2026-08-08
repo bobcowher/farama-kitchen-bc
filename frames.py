@@ -41,10 +41,16 @@ and comes through here.
 import numpy as np
 from PIL import Image
 
+# Every divisor of the source width is arithmetically clean, but the small ones
+# are not images. 896 divides evenly by 7, and a 7px kitchen is a typo rather
+# than a choice, so the floor keeps them out of both the allowlist and the
+# error message that prints it.
+MIN_SIZE = 64
 
-def divisors(width):
-    """Output sizes resize() will accept for a source of this width."""
-    return [d for d in range(2, width + 1) if width % d == 0]
+
+def supported(width):
+    """Sizes resize() accepts for a source of this width."""
+    return [d for d in range(MIN_SIZE, width + 1) if width % d == 0]
 
 
 def resize(frames, size):
@@ -67,11 +73,11 @@ def resize(frames, size):
             f"frames are {width}px but {size}px was asked for. That would mean "
             f"upsampling; work at {width}px or smaller.")
 
-    if width % size:
+    if size not in supported(width):
         raise ValueError(
-            f"{width} -> {size} is a {width / size:.4g}x reduction, and resize "
-            f"backends only agree on integer ratios. Pick a divisor of {width}: "
-            f"{divisors(width)}")
+            f"{size} is not a valid target for {width}px frames. Must be one of "
+            f"{supported(width)}, because resize backends only agree when the "
+            f"ratio divides evenly -- see frames.py.")
 
     # PIL crawls on the flipped view MuJoCo hands back (negative row stride),
     # 2.8 ms against 0.8 for the same result. The copy costs 0.02 ms.

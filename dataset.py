@@ -20,12 +20,12 @@ class Dataset():
     Shards are archived at whatever the collector rendered, currently 896, and
     load_data reduces them to image_size on the way in. image_size must divide
     the shard width evenly; frames.py explains why. Declaring a smaller arena
-    is the lever that keeps a large dataset in memory: at 640 a step costs
-    1.17 MiB, at 256 it costs 192 KiB, at 128 it costs 48 KiB.
+    is the lever that keeps a large dataset in memory: at 896 a step costs
+    2.30 MiB, at 224 it costs 147 KiB, at 128 it costs 48 KiB.
 
-    Load high enough for the encoder you might want later -- 224 and 256 are what
-    pretrained vision backbones expect -- and take the last step down per batch.
-    Downsampling here is one way; the frames never go back up.
+    Load high enough for the encoder you might want later -- 224 is what OpenVLA,
+    pi0 and PaliGemma all take -- and take any further step down per batch.
+    Reducing here is one way; the frames never go back up.
     """
 
     def __init__(self, max_size, image_size, n_actions, n_joints=9):
@@ -118,9 +118,9 @@ class DatasetShard():
     shard is a single episode and a ring buffer would corrupt it instead of
     ageing out old data.
 
-    Frames are stored as raw uint8 RGB and zlib'd by savez_compressed, ~280 KiB
-    per timestep at 640, so roughly 145 GB for 300 demos across 7 tasks. The
-    arena itself is image_size^2 * 3 * max_size, 614 MB at 640x640x500.
+    Frames are stored as raw uint8 RGB and zlib'd by savez_compressed, ~523 KiB
+    per timestep at 896, so roughly 285 GB for 300 demos across 7 tasks. The
+    arena itself is image_size^2 * 3 * max_size, 1.20 GB at 896x896x500.
 
     No next_state is stored, in any form. Behavior cloning never reads it, and
     within a shard it is an exact duplicate of the following row.
