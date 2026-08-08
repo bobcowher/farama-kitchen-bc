@@ -161,6 +161,14 @@ class DatasetShard():
 
         os.makedirs(directory, exist_ok=True)
 
+        # Filenames are second-resolution, so two saves inside one second would
+        # otherwise overwrite silently. A demo takes far longer than that to
+        # record, so a collision means something is wrong, not that we are fast.
+        if os.path.exists(filename):
+            raise FileExistsError(
+                f"{filename} already exists. Shard names are second-resolution, "
+                f"so this shard would overwrite one saved in the same second.")
+
         np.savez_compressed(filename,
                  task_name=self.task_name,
                  task_description=self.task_description,
