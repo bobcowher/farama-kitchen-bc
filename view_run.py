@@ -40,12 +40,6 @@ def main():
     done = data["done"]
     n = len(frames)
 
-    # A shard is one episode, so at most one step can be terminal. More than
-    # that means this file predates the fix and holds the old SAC bootstrap
-    # mask, which is the inverse of a done flag.
-    legacy_done = done.sum() > 1
-    done_label = "done(raw)" if legacy_done else "done"
-
     print("=" * 72)
     print(f"file        {path} ({os.path.getsize(path) / 1e6:.1f} MB)")
     print(f"task        {data['task_name']}")
@@ -53,11 +47,6 @@ def main():
     print(f"steps       {n}   frame {frames.shape[1]}x{frames.shape[2]}")
     print(f"reward      total {reward.sum():.1f}, "
           f"earned at step(s) {list(np.flatnonzero(reward > 0))}")
-    if legacy_done:
-        print()
-        print(f"NOTE: {done.sum()} of {n} steps are flagged terminal, so this shard")
-        print("predates the done fix and stores the old SAC bootstrap mask")
-        print("(1 = keep going, 0 = terminal). Read the raw value inverted.")
     print("=" * 72)
     print("space play/pause   r restart   q quit")
     print()
@@ -83,7 +72,7 @@ def main():
             cv2.imshow(window, frame)
 
             print(f"step {i + 1}/{n}   reward {reward[i]:.3f}   "
-                  f"{done_label} {bool(done[i])}")
+                  f"done {bool(done[i])}")
             print(row("joint_pos", joint_pos[i]))
             print(row("joint_vel", joint_vel[i]))
             print(row("action", action[i]), flush=True)

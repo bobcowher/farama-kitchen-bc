@@ -69,15 +69,7 @@ class Dataset():
         for filename, steps in zip(files, steps_per_file):
             data = np.load(filename)
 
-            done = data['done']
-            # A shard is one episode, so at most one step can be terminal. More
-            # than that means the file predates the done fix in human_control.py
-            # and still holds the old SAC bootstrap mask, which is the inverse.
-            if done.sum() > 1:
-                done = ~done
-                print(f"  {filename}: {steps} steps (inverted legacy done mask)")
-            else:
-                print(f"  {filename}: {steps} steps")
+            print(f"  {filename}: {steps} steps")
 
             end = index + steps
             self.camera_scene_memory[index:end] = data['camera_scene']
@@ -85,7 +77,7 @@ class Dataset():
             self.joint_vel_memory[index:end] = data['joint_vel']
             self.action_memory[index:end] = data['action']
             self.reward_memory[index:end] = data['reward']
-            self.terminal_memory[index:end] = done
+            self.terminal_memory[index:end] = data['done']
             self.task_description_memory[index:end] = str(data['task_description'])
             index = end
 
