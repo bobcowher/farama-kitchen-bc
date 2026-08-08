@@ -1,6 +1,6 @@
 import numpy as np
 from gymnasium import ObservationWrapper, Wrapper, spaces
-from PIL import Image
+import frames
 
 
 class HeldSetpointWrapper(Wrapper):
@@ -99,10 +99,10 @@ class VLAObservationWrapper(ObservationWrapper):
         # render_mode='human' is driving the teleop window.
         self._renderer.camera_id = -1  # free camera, per DEFAULT_CAMERA_CONFIG
         frame = self._renderer.render("rgb_array")
-        if frame.shape[0] != self.image_size or frame.shape[1] != self.image_size:
-            frame = np.asarray(Image.fromarray(frame).resize(
-                (self.image_size, self.image_size), Image.BILINEAR))
-        return frame
+        # Should already be image_size -- _set_render_size asked for it. If it
+        # is not, resize the same way the training loader does rather than a
+        # second way, so the policy never sees two flavours of the same scene.
+        return frames.resize(frame, self.image_size)
 
     def observation(self, observation):
         robot_obs = observation["observation"]
