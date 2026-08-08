@@ -4,6 +4,17 @@ from datetime import datetime
 import glob
 import frames
 
+
+def _open(filename):
+    """np.load, but say which shard is bad rather than raising from zipfile."""
+    try:
+        return np.load(filename)
+    except Exception as e:
+        raise ValueError(
+            f"{filename} could not be read ({type(e).__name__}). A shard left "
+            f"half-written by a killed collector looks like this; delete it.") from e
+
+
 class Dataset():
     """Demonstrations loaded off disk and sampled in batches for behavior cloning.
 
@@ -62,7 +73,7 @@ class Dataset():
         # First pass counts, so an oversized directory fails before anything is
         # written. Only the small action array is read here; the frames are read
         # once, in the fill pass below.
-        steps_per_file = [len(np.load(filename)['action']) for filename in files]
+        steps_per_file = [len(_open(filename)['action']) for filename in files]
         total = sum(steps_per_file)
 
         if total > self.mem_size:
@@ -74,7 +85,7 @@ class Dataset():
 
         index = 0
         for filename, steps in zip(files, steps_per_file):
-            data = np.load(filename)
+            data = _open(filename)
 
             print(f"  {filename}: {steps} steps")
 
@@ -118,9 +129,11 @@ class DatasetShard():
     shard is a single episode and a ring buffer would corrupt it instead of
     ageing out old data.
 
-    Frames are stored as raw uint8 RGB and zlib'd by savez_compressed, ~523 KiB
-    per timestep at 896, so roughly 285 GB for 300 demos across 7 tasks. The
-    arena itself is image_size^2 * 3 * max_size, 1.20 GB at 896x896x500.
+    Frames are stored as raw uint8 RGB and zlib'd by savez_compressed. Measured
+    over 104 microwave demos: 509 KiB per timestep, 59 steps per demo, 3.2 GB.
+    Demo length is what drives the total, not the task count -- microwave is a
+    short one, so scale by the task before trusting an estimate. The arena
+    itself is image_size^2 * 3 * max_size, 1.20 GB at 896x896x500.
 
     No next_state is stored, in any form. Behavior cloning never reads it, and
     within a shard it is an exact duplicate of the following row.
@@ -177,15 +190,26 @@ class DatasetShard():
                 f"{filename} already exists. Shard names are second-resolution, "
                 f"so this shard would overwrite one saved in the same second.")
 
-        np.savez_compressed(filename,
-                 task_name=self.task_name,
-                 task_description=self.task_description,
-                 camera_scene=self.camera_scene_memory[:self.mem_ctr],
-                 joint_pos=self.joint_pos_memory[:self.mem_ctr],
-                 joint_vel=self.joint_vel_memory[:self.mem_ctr],
-                 action=self.action_memory[:self.mem_ctr],
-                 reward=self.reward_memory[:self.mem_ctr],
-                 done=self.terminal_memory[:self.mem_ctr])
+        # Written to a temp name and moved into place, because savez_compressed
+        # takes about a second on a 25 MB shard and the file is an invalid zip
+        # for all of it. os.replace is atomic, so a reader either sees the whole
+        # shard or no file at all -- which makes it safe to load a directory
+        # while a collection run is still appending to it. A killed collector
+        # leaves a visible .tmp rather than a corrupt shard that every future
+        # load_data would die on. load_data globs *.npz, so strays are ignored.
+        tmp = f'{filename}.tmp'
+        with open(tmp, 'wb') as fh:
+            np.savez_compressed(fh,
+                     task_name=self.task_name,
+                     task_description=self.task_description,
+                     camera_scene=self.camera_scene_memory[:self.mem_ctr],
+                     joint_pos=self.joint_pos_memory[:self.mem_ctr],
+                     joint_vel=self.joint_vel_memory[:self.mem_ctr],
+                     action=self.action_memory[:self.mem_ctr],
+                     reward=self.reward_memory[:self.mem_ctr],
+                     done=self.terminal_memory[:self.mem_ctr])
+        os.replace(tmp, filename)
+
         print("-" * 20)
         print(f"Saved {filename} ({self.mem_ctr} steps, "
               f"{os.path.getsize(filename) / 1e6:.1f} MB)")
