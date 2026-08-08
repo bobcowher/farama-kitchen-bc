@@ -73,12 +73,20 @@ def resize(frames, size):
             f"frames are {width}px but {size}px was asked for. That would mean "
             f"upsampling; work at {width}px or smaller.")
 
-    if size not in SUPPORTED_SIZES or width % size:
+    # Two different mistakes, so two different messages. Reporting the second
+    # as "must be one of [... 448 ...]" while rejecting 448 reads as a
+    # contradiction and sends you looking at the wrong number.
+    if size not in SUPPORTED_SIZES:
         raise ValueError(
-            f"{size} is not a valid target for {width}px frames. Must be one of "
-            f"{list(SUPPORTED_SIZES)}, which are the even divisors of a "
-            f"{RENDER_SIZE}px render -- resize backends only agree when the "
-            f"ratio divides evenly.")
+            f"{size} is not a supported size. Must be one of "
+            f"{list(SUPPORTED_SIZES)}.")
+
+    if width % size:
+        raise ValueError(
+            f"{size} is a supported size but does not divide {width}px frames "
+            f"evenly. SUPPORTED_SIZES describes the {RENDER_SIZE}px this project "
+            f"renders at, so {width}px frames came from somewhere else -- an "
+            f"image_size that was not updated, or shards from an older render.")
 
     # PIL crawls on the flipped view MuJoCo hands back (negative row stride),
     # 2.8 ms against 0.8 for the same result. The copy costs 0.02 ms.

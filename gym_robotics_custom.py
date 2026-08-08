@@ -63,7 +63,7 @@ class VLAObservationWrapper(ObservationWrapper):
     doubled storage for a benefit this setup was unlikely to collect.
     """
 
-    def __init__(self, env, image_size=896):
+    def __init__(self, env, image_size=frames.RENDER_SIZE):
         super().__init__(env)
         self.image_size = image_size
         self._set_render_size(env.unwrapped, image_size)

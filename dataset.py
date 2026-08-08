@@ -90,8 +90,13 @@ class Dataset():
             print(f"  {filename}: {steps} steps")
 
             end = index + steps
-            self.camera_scene_memory[index:end] = frames.resize(
-                data['camera_scene'], self.camera_scene_memory.shape[1])
+            try:
+                self.camera_scene_memory[index:end] = frames.resize(
+                    data['camera_scene'], self.camera_scene_memory.shape[1])
+            except ValueError as e:
+                # resize only sees an array, so it cannot say which of a few
+                # hundred shards is the odd one out.
+                raise ValueError(f"{filename}: {e}") from None
             self.joint_pos_memory[index:end] = data['joint_pos']
             self.joint_vel_memory[index:end] = data['joint_vel']
             self.action_memory[index:end] = data['action']

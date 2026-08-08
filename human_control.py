@@ -3,6 +3,7 @@ import os
 import gymnasium as gym
 import gymnasium_robotics  # registers FrankaKitchen-v1; no longer automatic in gymnasium 1.x
 from dataset import DatasetShard
+import frames
 # from agent import Agent
 from gym_robotics_custom import HeldSetpointWrapper, VLAObservationWrapper
 import pygame
@@ -13,11 +14,10 @@ if __name__ == '__main__':
 
     max_episode_steps=500 # max episode steps
     # Square camera frame, archived at full size; training reduces it in
-    # load_data and a rollout reduces it with ObsReshapeWrapper. 896 = 2^7 * 7,
-    # so it divides cleanly into 224 and 448 (what PaliGemma, OpenVLA and pi0
-    # take) as well as 128. Only integer ratios keep resize backends in
-    # agreement -- see frames.py. Costs ~550 KiB/step on disk.
-    image_size = 896
+    # load_data and a rollout reduces it with ObsReshapeWrapper. Taken from
+    # frames.py rather than typed here, so the collector cannot drift from the
+    # sizes the loader will accept. Costs ~509 KiB/step on disk.
+    image_size = frames.RENDER_SIZE
     env_name = "FrankaKitchen-v1"
 
     # The only seven tasks the env accepts; anything else raises at gym.make.
