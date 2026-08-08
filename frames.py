@@ -41,16 +41,16 @@ and comes through here.
 import numpy as np
 from PIL import Image
 
-# Every divisor of the source width is arithmetically clean, but the small ones
-# are not images. 896 divides evenly by 7, and a 7px kitchen is a typo rather
-# than a choice, so the floor keeps them out of both the allowlist and the
-# error message that prints it.
-MIN_SIZE = 64
-
-
-def supported(width):
-    """Sizes resize() accepts for a source of this width."""
-    return [d for d in range(MIN_SIZE, width + 1) if width % d == 0]
+# The collector renders at RENDER_SIZE, and these are the sizes a shard can be
+# reduced to: its even divisors, dropping the ones too small to be images (896
+# also divides by 7, 14, 28 and 56). Every entry is an integer reduction, which
+# is the property that keeps resize backends agreeing -- see above. 224 is the
+# VLM target, 128 the small-CNN one, 896 a pass-through.
+#
+# These two belong to each other. Changing the render size means recomputing
+# this list, not just editing the number.
+RENDER_SIZE = 896
+SUPPORTED_SIZES = (64, 112, 128, 224, 448, 896)
 
 
 def resize(frames, size):
@@ -73,11 +73,12 @@ def resize(frames, size):
             f"frames are {width}px but {size}px was asked for. That would mean "
             f"upsampling; work at {width}px or smaller.")
 
-    if size not in supported(width):
+    if size not in SUPPORTED_SIZES or width % size:
         raise ValueError(
             f"{size} is not a valid target for {width}px frames. Must be one of "
-            f"{supported(width)}, because resize backends only agree when the "
-            f"ratio divides evenly -- see frames.py.")
+            f"{list(SUPPORTED_SIZES)}, which are the even divisors of a "
+            f"{RENDER_SIZE}px render -- resize backends only agree when the "
+            f"ratio divides evenly.")
 
     # PIL crawls on the flipped view MuJoCo hands back (negative row stride),
     # 2.8 ms against 0.8 for the same result. The copy costs 0.02 ms.
