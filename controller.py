@@ -20,7 +20,7 @@ QUIT_BUTTON = 9   # Minus
 
 class Controller:
     def __init__(self):
-        self.gripper_closed = None
+        self.reset()
 
         pygame.init()
         pygame.joystick.init()
@@ -28,6 +28,18 @@ class Controller:
         # Assuming only one joystick is connected
         self.joystick = pygame.joystick.Joystick(0)
         self.joystick.init()
+
+    def reset(self):
+        """Line the controller up with a freshly reset env.
+
+        gripper_closed is sticky, and this object outlives an episode, so
+        without this a demo that ended holding something would start the next
+        one commanding a close -- against fingers that env.reset() just opened.
+        Open rather than None: None left dims 7/8 at zero until the first B or
+        X, so identical frames got different action targets depending on
+        whether the gripper had been touched yet.
+        """
+        self.gripper_closed = False
 
     def get_action(self):
         """

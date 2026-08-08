@@ -28,7 +28,7 @@ if __name__ == '__main__':
         "hinge cabinet": "Open the cabinet second from the left",    # travel 1.15
     }
 
-    task = "hinge cabinet"
+    task = "microwave"
     task_description = TASKS[task]
     task_no_spaces = task.replace(" ", "_")
 
@@ -50,6 +50,7 @@ if __name__ == '__main__':
         episode_steps = 0
         done = False
         state, info = env.reset()
+        controller.reset()
 
         memory = DatasetShard(max_size=max_episode_steps,
                               image_size=image_size,
