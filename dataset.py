@@ -1,5 +1,6 @@
 import numpy as np
 import os
+from PIL import Image
 from datetime import datetime
 import glob
 
@@ -16,9 +17,14 @@ class Dataset():
     exceed it rather than quietly growing, so a directory holding more than you
     planned for is an error you hear about instead of a machine that swaps.
 
-    Frames cost image_size^2 * 3 bytes per step -- 1.17 MiB at 640 -- so a 91 GB
-    machine holds roughly one task's worth of demos. Past that this needs to
-    become a lazy loader that pulls frames per batch.
+    Shards are archived at whatever the collector rendered, currently 640, and
+    load_data downsamples to image_size on the way in. Declaring a smaller arena
+    is the lever that keeps a large dataset in memory: at 640 a step costs
+    1.17 MiB, at 256 it costs 192 KiB, at 128 it costs 48 KiB.
+
+    Load high enough for the encoder you might want later -- 224 and 256 are what
+    pretrained vision backbones expect -- and take the last step down per batch.
+    Downsampling here is one way; the frames never go back up.
     """
 
     def __init__(self, max_size, image_size, n_actions, n_joints=9):
@@ -72,7 +78,7 @@ class Dataset():
             print(f"  {filename}: {steps} steps")
 
             end = index + steps
-            self.camera_scene_memory[index:end] = data['camera_scene']
+            self.camera_scene_memory[index:end] = self._fit(data['camera_scene'])
             self.joint_pos_memory[index:end] = data['joint_pos']
             self.joint_vel_memory[index:end] = data['joint_vel']
             self.action_memory[index:end] = data['action']
@@ -85,6 +91,30 @@ class Dataset():
 
         print(f"Loaded {len(files)} shards, {self.mem_ctr} of {self.mem_size} steps, "
               f"{self.camera_scene_memory[:self.mem_ctr].nbytes / 1e9:.1f} GB of frames")
+
+    def _fit(self, frames):
+        """Downsample a shard's frames to the declared arena size.
+
+        BOX averages over the source pixels each output pixel covers, which is
+        what you want going 640 -> 256: bilinear samples too sparsely at that
+        ratio and aliases high-frequency detail into the only input the policy
+        gets. Upsampling is refused rather than done -- it would invent detail
+        and quietly hide a mismatched arena.
+        """
+        size = self.camera_scene_memory.shape[1]
+        if frames.shape[1] == size:
+            return frames
+
+        if frames.shape[1] < size:
+            raise ValueError(
+                f"shard frames are {frames.shape[1]}px but this Dataset declares "
+                f"{size}px. Loading would mean upsampling; build the Dataset at "
+                f"{frames.shape[1]} or smaller.")
+
+        out = np.empty((len(frames), size, size, 3), dtype=np.uint8)
+        for i, frame in enumerate(frames):
+            out[i] = np.asarray(Image.fromarray(frame).resize((size, size), Image.BOX))
+        return out
 
     def sample_batch(self, batch_size):
         batch = np.random.choice(self.mem_ctr, batch_size)
