@@ -113,6 +113,46 @@ class VLAObservationWrapper(ObservationWrapper):
         }
 
 
+class ObsReshapeWrapper(ObservationWrapper):
+    """Brings a rendered observation down to the size the policy trained on.
+
+    The collector archives at the render size so a shard stays useful to models
+    that want more pixels than today's network does. Training reduces those
+    shards in load_data; this applies the identical reduction to a live env, so
+    a rollout sees what training saw rather than something a few grey levels off
+    along every edge.
+
+    Outermost wrapper. It reshapes whatever camera_scene the layer below built,
+    so anything that wants full-resolution frames -- recording, debugging --
+    goes below it or leaves it off.
+
+    Only camera_scene is touched; joint_pos and joint_vel pass through. The name
+    is deliberately not "downsample": if a policy later wants a crop, a channel
+    order or a normalisation, this is where that goes, and all of it has to
+    happen identically on both sides of the train/eval line.
+    """
+
+    def __init__(self, env, image_size):
+        super().__init__(env)
+        self.image_size = image_size
+
+        source = env.observation_space["camera_scene"].shape[0]
+        # Fail here rather than on the first step of a rollout. Running the real
+        # function on a dummy frame keeps one definition of what is allowed.
+        frames.resize(np.zeros((source, source, 3), np.uint8), image_size)
+
+        self.observation_space = spaces.Dict({
+            **env.observation_space.spaces,
+            "camera_scene": spaces.Box(0, 255, (image_size, image_size, 3), np.uint8),
+        })
+
+    def observation(self, observation):
+        return {
+            **observation,
+            "camera_scene": frames.resize(observation["camera_scene"], self.image_size),
+        }
+
+
 class ArmHomeWrapper(Wrapper):
     """Drives the arm back to its start pose without touching the objects.
 

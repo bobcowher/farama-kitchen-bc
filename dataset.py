@@ -17,8 +17,9 @@ class Dataset():
     exceed it rather than quietly growing, so a directory holding more than you
     planned for is an error you hear about instead of a machine that swaps.
 
-    Shards are archived at whatever the collector rendered, currently 640, and
-    load_data downsamples to image_size on the way in. Declaring a smaller arena
+    Shards are archived at whatever the collector rendered, currently 896, and
+    load_data reduces them to image_size on the way in. image_size must divide
+    the shard width evenly; frames.py explains why. Declaring a smaller arena
     is the lever that keeps a large dataset in memory: at 640 a step costs
     1.17 MiB, at 256 it costs 192 KiB, at 128 it costs 48 KiB.
 
