@@ -28,7 +28,10 @@ class Dataset():
 
     The arenas mirror the observation space in gym_robotics_custom.py, and
     sample_batch hands back a dict with those same keys, so a policy written
-    against the live env works unchanged on the dataset.
+    against the live env works unchanged on the dataset. camera_scene comes
+    back as NCHW to match Conv2d, the same as ObsReshapeWrapper gives at
+    rollout; the arena itself stays HWC, which is what the shards hold and what
+    zlib compresses well.
 
     max_size is a declaration of what you expect to load. load_data refuses to
     exceed it rather than quietly growing, so a directory holding more than you
@@ -134,7 +137,12 @@ class Dataset():
         batch = np.random.choice(self.mem_ctr, batch_size)
 
         state = {
-            "camera_scene": self.camera_scene_memory[batch],
+            # NCHW, because that is the shape Conv2d takes. Fancy indexing has
+            # already made a fresh contiguous HWC copy, so the transpose is a
+            # view over it -- nothing moves, and torch.from_numpy reports the
+            # result channels_last-contiguous, which is the fast layout on GPU.
+            # Storage stays HWC; see the class docstring.
+            "camera_scene": self.camera_scene_memory[batch].transpose(0, 3, 1, 2),
             "joint_pos": self.joint_pos_memory[batch],
             "joint_vel": self.joint_vel_memory[batch],
         }
@@ -153,6 +161,10 @@ class DatasetShard():
     max_episode_steps. Overrunning it raises rather than wrapping, because a
     shard is a single episode and a ring buffer would corrupt it instead of
     ageing out old data.
+
+    Frames go in HWC, straight off the renderer. Do not record through
+    ObsReshapeWrapper -- it hands out NCHW for the model, and the arena would
+    reject the shape.
 
     Frames are stored as raw uint8 RGB and zlib'd by savez_compressed. Measured
     over 104 microwave demos: 509 KiB per timestep, 59 steps per demo, 3.2 GB.
