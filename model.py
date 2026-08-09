@@ -12,9 +12,15 @@ def weights_init_(m):
 
 
 class Model(nn.Module):
-    def __init__(self, image_input_shape, joint_input_dim, num_actions, hidden_dim,
-                 n_tasks, compression_dim=None, n_hidden_layers=1,
-                 checkpoint_dir='checkpoints', name='bc_network'):
+    def __init__(self, image_input_shape, 
+                 joint_pos_dim, 
+                 joint_vel_dim, 
+                 num_actions, 
+                 hidden_dim,
+                 compression_dim=None, 
+                 n_hidden_layers=1,
+                 checkpoint_dir='checkpoints', 
+                 name='bc_network'):
         super(Model, self).__init__()
 
         # Per-modality embedding width before fusion. Defaults to hidden_dim
@@ -30,7 +36,9 @@ class Model(nn.Module):
             dummy = torch.zeros(1, *image_input_shape)
             flat_size = self._conv_forward(dummy).shape[1]
 
-        self.joint_input = nn.Linear(joint_input_dim, compression_dim)
+        # We want the total compression dim to be the joint information, for gut feeling reasons. 
+        self.joint_pos_input = nn.Linear(joint_pos_dim, compression_dim // 2)
+        self.joint_vel_input = nn.Linear(joint_vel_dim, compression_dim // 2)
 
         self.image_input = nn.Linear(flat_size, compression_dim)
 
@@ -41,7 +49,7 @@ class Model(nn.Module):
         # to get wrong. Equivalent to one-hot -> bias-free Linear; no relu,
         # because the embedding is already a free vector and clamping it to the
         # positive orthant would only cost capacity.
-        self.task_input = nn.Embedding(n_tasks, compression_dim)
+        # self.task_input = nn.Embedding(n_tasks, compression_dim)
 
         self.compression_layer = nn.Linear(compression_dim * 3, hidden_dim)
 

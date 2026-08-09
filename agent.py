@@ -1,12 +1,14 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-from dataset import Dataset
 import gymnasium as gym 
 import gymnasium_robotics  # registers FrankaKitchen-v1; no longer automatic in gymnasium 1.x
 from gym_robotics_custom import HeldSetpointWrapper, VLAObservationWrapper, ObsReshapeWrapper 
 
 from torch.utils.tensorboard import SummaryWriter
+
+from dataset import Dataset
+from model import Model
 
 class Agent:
 
@@ -45,4 +47,19 @@ class Agent:
                                n_actions=self.env.action_space.shape[0],
                                n_joints=9)
 
-        self.dataset.load_data()
+        self.dataset.load_data(path="dataset/microwave")
+
+        obs, info = self.env.reset() 
+
+        image_input_shape = obs['camera_scene'].shape
+        joint_pos_dim     = obs['joint_pos'].shape[0]
+        joint_vel_dim     = obs['joint_vel'].shape[0]
+        num_actions       = self.env.action_space.shape[0] 
+
+        print(joint_pos_dim)
+
+        self.model = Model(image_input_shape=obs['camera_scene'].shape,
+                           joint_pos_dim=joint_pos_dim,
+                           joint_vel_dim=joint_vel_dim,
+                           num_actions=num_actions,
+                           hidden_dim=512)
