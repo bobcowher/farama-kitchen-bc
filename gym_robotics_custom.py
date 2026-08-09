@@ -126,20 +126,18 @@ class ObsReshapeWrapper(ObservationWrapper):
     so anything that wants full-resolution frames -- recording, debugging --
     goes below it or leaves it off.
 
-    Only camera_scene is touched; joint_pos and joint_vel pass through. The name
-    is deliberately not "downsample": if a policy later wants a crop, a channel
-    order or a normalisation, this is where that goes, and all of it has to
-    happen identically on both sides of the train/eval line.
+    Only camera_scene is touched; joint_pos and joint_vel pass through. Named
+    for reshaping generally because a crop or a normalisation would belong here
+    too -- anything that has to happen identically on both sides of the
+    train/eval line.
     """
 
     def __init__(self, env, image_size):
         super().__init__(env)
         self.image_size = image_size
 
-        source = env.observation_space["camera_scene"].shape[0]
-        # Fail here rather than on the first step of a rollout. Running the real
-        # function on a dummy frame keeps one definition of what is allowed.
-        frames.resize(np.zeros((source, source, 3), np.uint8), image_size)
+        # Fail here rather than on the first step of a rollout.
+        frames.validate(env.observation_space["camera_scene"].shape[0], image_size)
 
         self.observation_space = spaces.Dict({
             **env.observation_space.spaces,

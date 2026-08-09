@@ -6,9 +6,8 @@ import glob
 import frames
 
 # Loading is 77% zlib inflate and 23% resize, both of which release the GIL, so
-# threads scale where they normally would not. Measured on 32 cores: 5.6x at 16
-# workers and flat after, since the plateau is memory bandwidth rather than CPU.
-# Processes reach 6.5x but pay pickling and pool startup for the extra 0.9x.
+# threads scale here where they normally would not: 8x on 32 cores, flat past 16
+# workers because the limit is memory bandwidth rather than CPU.
 WORKERS = min(16, os.cpu_count() or 1)
 
 
@@ -91,12 +90,8 @@ class Dataset():
                 f"of frames) or point at a smaller directory.")
 
         index = 0
-        # map keeps input order, so shards still land in the arena sorted. It
-        # submits every file up front, but only WORKERS run at once and this
-        # loop drains results about as fast as they arrive: measured 3.0 GB
-        # peak against 2.7 for a hand-batched version, on the worst case of 48
-        # shards at 896 with no reduction. In-flight is bounded in practice by
-        # roughly the arena size, which has to fit in memory anyway.
+        # map keeps input order, which is what lets the zip below line results
+        # up with the counts from the first pass.
         with ThreadPoolExecutor(WORKERS) as pool:
             loaded = pool.map(self._read, files)
 
@@ -122,8 +117,8 @@ class Dataset():
         """Decompress one shard and reduce its frames. Runs on a worker thread.
 
         The resize happens here rather than in the caller so the expensive half
-        is parallel too, and so a shard's full-size frames are freed as soon as
-        the reduced copy exists.
+        is parallel too, and so full-size frames are freed as soon as the
+        reduced copy exists.
         """
         data = _open(filename)
         try:
