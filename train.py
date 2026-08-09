@@ -1,8 +1,4 @@
-from datetime import datetime
+from agent import Agent
+import agent
 
-print(datetime.now())
-
-date_formatted = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-
-print(date_formatted)
-
+agent = Agent()
