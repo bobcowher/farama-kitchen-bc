@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 import gymnasium as gym 
 import gymnasium_robotics  # registers FrankaKitchen-v1; no longer automatic in gymnasium 1.x
+from torch.optim.adam import Adam
 from gym_robotics_custom import HeldSetpointWrapper, VLAObservationWrapper, ObsReshapeWrapper 
 
 from torch.utils.tensorboard import SummaryWriter
@@ -18,6 +19,7 @@ class Agent:
         native_image_size = 896 
         env_name = "FrankaKitchen-v1"
         max_buffer_size = 100000
+        learning_rate = 0.0001
 
         # The only seven tasks the env accepts; anything else raises at gym.make.
         # "travel" is how far past the success threshold the object has to move,
@@ -58,8 +60,44 @@ class Agent:
 
         print(joint_pos_dim)
 
+        self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+
         self.model = Model(image_input_shape=obs['camera_scene'].shape,
                            joint_pos_dim=joint_pos_dim,
                            joint_vel_dim=joint_vel_dim,
                            num_actions=num_actions,
-                           hidden_dim=512)
+                           hidden_dim=512).to(self.device)
+
+        self.optimizer = Adam(self.model.parameters(), learning_rate)
+
+    def train(self, epochs):
+
+        for i in range(epochs):
+            states, actions, _, _, _ = self.dataset.sample_batch(8)
+            
+            images = states['camera_scene']
+            joint_pos = states['joint_pos']
+            joint_vel = states['joint_vel']
+
+            images    = torch.tensor(images, dtype=torch.float32).to(self.device)
+            joint_pos = torch.tensor(joint_pos, dtype=torch.float32).to(self.device)
+            joint_vel = torch.tensor(joint_vel, dtype=torch.float32).to(self.device)
+            actions   = torch.tensor(actions).to(self.device)
+
+            pred_actions = self.model(obs=images,
+                                      joint_pos=joint_pos,
+                                      joint_vel=joint_vel)            
+
+            # print(pred_actions.shape)
+            # print(actions.shape)
+
+            loss = F.mse_loss(actions, pred_actions)
+
+            self.optimizer.zero_grad()
+
+            loss.backward()
+
+            self.optimizer.step()
+
+
+

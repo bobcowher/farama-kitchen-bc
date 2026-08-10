@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import glob
@@ -66,13 +67,16 @@ class Dataset():
     def can_sample(self, batch_size):
         return self.mem_ctr >= batch_size
 
-    def load_data(self, path):
+    def load_data(self, path, verbose=False):
         """Load every npz shard under path, recursively.
 
         Shards are concatenated in sorted filename order, so a directory of
         tasks loads as one mixed set. That is the normal case now that the
         policy is language conditioned on task_description.
         """
+        start = time.time()
+        print(f"Loading data from {path}...")
+
         files = sorted(glob.glob(os.path.join(path, '**', '*.npz'), recursive=True))
 
         if not files:
@@ -99,7 +103,8 @@ class Dataset():
             loaded = pool.map(self._read, files)
 
             for filename, steps, (camera, data) in zip(files, steps_per_file, loaded):
-                print(f"  {filename}: {steps} steps")
+                if verbose:
+                    print(f"  {filename}: {steps} steps")
 
                 end = index + steps
                 self.camera_scene_memory[index:end] = camera
@@ -112,9 +117,9 @@ class Dataset():
                 index = end
 
         self.mem_ctr = total
+        elapsed = time.time() - start
 
-        print(f"Loaded {len(files)} shards, {self.mem_ctr} of {self.mem_size} steps, "
-              f"{self.camera_scene_memory[:self.mem_ctr].nbytes / 1e9:.1f} GB of frames")
+        print(f"Loaded {self.mem_ctr} steps from {path} in {elapsed:.1f}s")
 
     def _read(self, filename):
         """Decompress one shard and reduce its frames. Runs on a worker thread.

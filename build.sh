@@ -13,5 +13,5 @@ conda activate farama-kitchen-bc
 
 # The main script: training. Score a checkpoint with ./eval.py, watch one run
 # with ./test.py -- both take the same conda env this sets up.
-python -u ./human_control.py
-# python -u train.py
+# python -u ./human_control.py
+python -u train.py

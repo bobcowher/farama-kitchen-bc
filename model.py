@@ -42,16 +42,7 @@ class Model(nn.Module):
 
         self.image_input = nn.Linear(flat_size, compression_dim)
 
-        # Which task to perform. In libero_spatial every task shares the scene
-        # and differs only in the instruction, so without this the ten tasks are
-        # the same observation with contradictory labels.
-        # Indexed by raw task_id over the whole suite, so no id remapping exists
-        # to get wrong. Equivalent to one-hot -> bias-free Linear; no relu,
-        # because the embedding is already a free vector and clamping it to the
-        # positive orthant would only cost capacity.
-        # self.task_input = nn.Embedding(n_tasks, compression_dim)
-
-        self.compression_layer = nn.Linear(compression_dim * 3, hidden_dim)
+        self.compression_layer = nn.Linear(compression_dim * 2, hidden_dim)
 
         # n_hidden_layers hidden FC layers between fusion and output.
         # n_hidden_layers=1 reproduces the original single `linear1`.
@@ -76,15 +67,16 @@ class Model(nn.Module):
         x = F.relu(self.conv3(x))
         return x.flatten(1)
 
-    def forward(self, obs, joint_state, task_id):
+    def forward(self, obs, joint_pos, joint_vel):
         x_image = self._conv_forward(obs)
         x_image = F.relu(self.image_input(x_image))
 
-        x_joint = F.relu(self.joint_input(joint_state))
+        x_joint_pos = F.relu(self.joint_pos_input(joint_pos))
+        x_joint_vel = F.relu(self.joint_vel_input(joint_vel))
 
-        x_task = self.task_input(task_id)
+        # x_task = self.task_input(task_id)
 
-        x = torch.cat([x_image, x_joint, x_task], dim=1)
+        x = torch.cat([x_image, x_joint_pos, x_joint_vel], dim=1)
 
         x = F.relu(self.compression_layer(x))
 
