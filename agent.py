@@ -1,10 +1,12 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
+import time
 import gymnasium as gym 
 import gymnasium_robotics  # registers FrankaKitchen-v1; no longer automatic in gymnasium 1.x
 from torch.optim.adam import Adam
 from gym_robotics_custom import HeldSetpointWrapper, VLAObservationWrapper, ObsReshapeWrapper 
+
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -13,13 +15,18 @@ from model import Model
 
 class Agent:
 
-    def __init__(self):
+    def __init__(self, eval=False):
         max_episode_steps=500 # max episode steps
         image_size = 448 
         native_image_size = 896 
         env_name = "FrankaKitchen-v1"
         max_buffer_size = 100000
         learning_rate = 0.0001
+
+        if(eval):
+            render_mode = 'human'
+        else:
+            render_mode = 'rgb_array'
 
         # The only seven tasks the env accepts; anything else raises at gym.make.
         # "travel" is how far past the success threshold the object has to move,
@@ -38,7 +45,7 @@ class Agent:
         task_description = TASKS[task]
         task_no_spaces = task.replace(" ", "_")
 
-        self.env = gym.make(env_name, max_episode_steps=max_episode_steps, tasks_to_complete=[task], render_mode='human')
+        self.env = gym.make(env_name, max_episode_steps=max_episode_steps, tasks_to_complete=[task], render_mode=render_mode)
 
         self.env = HeldSetpointWrapper(self.env)
         self.env = VLAObservationWrapper(self.env, image_size=native_image_size)
@@ -49,7 +56,8 @@ class Agent:
                                n_actions=self.env.action_space.shape[0],
                                n_joints=9)
 
-        self.dataset.load_data(path="dataset/microwave")
+        if not eval:
+            self.dataset.load_data(path="dataset/microwave")
 
         obs, info = self.env.reset() 
 
@@ -70,26 +78,39 @@ class Agent:
 
         self.optimizer = Adam(self.model.parameters(), learning_rate)
 
-    def train(self, epochs):
+        if not eval:
+            self.env.close()
 
-        for i in range(epochs):
-            states, actions, _, _, _ = self.dataset.sample_batch(8)
-            
-            images = states['camera_scene']
-            joint_pos = states['joint_pos']
-            joint_vel = states['joint_vel']
+    def process_observation(self,obs):
+        images    = obs['camera_scene']
+        joint_pos = obs['joint_pos']
+        joint_vel = obs['joint_vel']
 
-            images    = torch.tensor(images, dtype=torch.float32).to(self.device)
-            joint_pos = torch.tensor(joint_pos, dtype=torch.float32).to(self.device)
-            joint_vel = torch.tensor(joint_vel, dtype=torch.float32).to(self.device)
-            actions   = torch.tensor(actions).to(self.device)
+        images    = torch.tensor(images, dtype=torch.float32).to(self.device) / 255 # Normalize
+        joint_pos = torch.tensor(joint_pos, dtype=torch.float32).to(self.device)
+        joint_vel = torch.tensor(joint_vel, dtype=torch.float32).to(self.device)
+
+        if images.dim() == 3:
+            images    = images.unsqueeze(0)
+            joint_pos = joint_pos.unsqueeze(0)
+            joint_vel = joint_vel.unsqueeze(0)
+
+        return images, joint_pos, joint_vel
+
+
+
+    def train(self, epochs, batch_size):
+
+        for epoch in range(epochs):
+            states, actions, _, _, _ = self.dataset.sample_batch(batch_size)
+           
+            images, joint_pos, joint_vel = self.process_observation(states)
+
+            actions = torch.tensor(actions).to(self.device)
 
             pred_actions = self.model(obs=images,
                                       joint_pos=joint_pos,
                                       joint_vel=joint_vel)            
-
-            # print(pred_actions.shape)
-            # print(actions.shape)
 
             loss = F.mse_loss(actions, pred_actions)
 
@@ -98,6 +119,42 @@ class Agent:
             loss.backward()
 
             self.optimizer.step()
+
+            if(epoch % 100 == 0):
+                print(f"Epoch: {epoch} Loss: {loss.item()}")
+                self.model.save_checkpoint()
+
+    def test(self):
+
+        self.model.load_checkpoint()
+
+        done = False
+        
+        obs, info = self.env.reset()
+
+        while not done:
+            image, joint_pos, joint_vel = self.process_observation(obs)
+
+            action = self.model(obs=image,
+                               joint_pos=joint_pos,
+                               joint_vel=joint_vel)
+
+            action = action.cpu().detach().numpy().squeeze()
+
+            obs, reward, done, trunc, info = self.env.step(action)
+
+            self.env.render()
+
+            print(f"Obs: {obs}")
+            print(f"Reward: {reward}")
+            print(f"Done: {done}")
+            print(f"Info: {info}")
+
+            time.sleep(0.05)
+            
+
+
+
 
 
 

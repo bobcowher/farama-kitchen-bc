@@ -82,7 +82,11 @@ class Model(nn.Module):
 
         for layer in self.hidden_layers:
             x = F.relu(layer(x))
-        x = torch.tanh(self.output(x))
+
+        x = F.tanh(self.output(x))
+        # # x = F.tanh(self.out)
+        # x = self.output(x)
+        # # x = F.tanh(x)
         return x
     
     def save_checkpoint(self):
