@@ -5,6 +5,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import glob
 import frames
+from tasks import task_index
 
 # Loading is 77% zlib inflate and 23% resize, both of which release the GIL, so
 # threads scale here where they normally would not: 8x on 32 cores, flat past 16
@@ -156,7 +157,10 @@ class Dataset():
                 self.action_memory[batch],
                 self.reward_memory[batch],
                 self.terminal_memory[batch],
-                self.task_description_memory[batch])
+                # V1 goal conditioning: task ids, not descriptions -- Model
+                # embeds an index (see tasks.py). Revert this line and the
+                # import above to go back to raw task_description strings.
+                task_index(self.task_description_memory[batch]))
 
 
 class DatasetShard():

@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import time
+import datetime
 import gymnasium as gym 
 import gymnasium_robotics  # registers FrankaKitchen-v1; no longer automatic in gymnasium 1.x
 from torch.optim.adam import Adam
@@ -12,6 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from dataset import Dataset
 from model import Model
+from tasks import TASKS, TASK_DESCRIPTIONS, task_index
 
 class Agent:
 
@@ -28,24 +30,11 @@ class Agent:
         else:
             render_mode = 'rgb_array'
 
-        # The only seven tasks the env accepts; anything else raises at gym.make.
-        # "travel" is how far past the success threshold the object has to move,
-        # so it roughly ranks how long a demo takes.
-        TASKS = {
-            "slide cabinet": "Slide the cabinet door open",              # travel 0.07
-            "kettle":        "Move the kettle to the top left burner",   # travel 0.11
-            "light switch":  "Turn on the overhead light switch",        # travel 0.39
-            "microwave":     "Open the microwave door",                  # travel 0.45
-            "bottom burner": "Turn the oven knob for the bottom left burner",  # 0.58
-            "top burner":    "Turn the oven knob for the top left burner",     # 0.62
-            "hinge cabinet": "Open the cabinet second from the left",    # travel 1.15
-        }
+        self.task = "microwave"
+        self.task_description = TASKS[self.task]
+        task_no_spaces = self.task.replace(" ", "_")
 
-        task = "microwave"
-        task_description = TASKS[task]
-        task_no_spaces = task.replace(" ", "_")
-
-        self.env = gym.make(env_name, max_episode_steps=max_episode_steps, tasks_to_complete=[task], render_mode=render_mode)
+        self.env = gym.make(env_name, max_episode_steps=max_episode_steps, tasks_to_complete=[self.task], render_mode=render_mode)
 
         self.env = HeldSetpointWrapper(self.env)
         self.env = VLAObservationWrapper(self.env, image_size=native_image_size)
@@ -66,14 +55,13 @@ class Agent:
         joint_vel_dim     = obs['joint_vel'].shape[0]
         num_actions       = self.env.action_space.shape[0] 
 
-        print(joint_pos_dim)
-
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
-        self.model = Model(image_input_shape=obs['camera_scene'].shape,
+        self.model = Model(image_input_shape=image_input_shape,
                            joint_pos_dim=joint_pos_dim,
                            joint_vel_dim=joint_vel_dim,
                            num_actions=num_actions,
+                           task_dim=len(TASK_DESCRIPTIONS),
                            hidden_dim=512).to(self.device)
 
         self.optimizer = Adam(self.model.parameters(), learning_rate)
@@ -100,17 +88,23 @@ class Agent:
 
 
     def train(self, epochs, batch_size):
+        summary_writer_name = f'runs/{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
+        # summary_writer_name = summary_writer_name + f"_fn={free_nats}_gc={grad_clip}" + summary_writer_label
+        # summary_writer_name = f'{summary_writer_name}'
+        summary_writer = SummaryWriter(summary_writer_name)
 
         for epoch in range(epochs):
-            states, actions, _, _, _ = self.dataset.sample_batch(batch_size)
+            states, actions, _, _, tasks = self.dataset.sample_batch(batch_size)
            
             images, joint_pos, joint_vel = self.process_observation(states)
 
             actions = torch.tensor(actions).to(self.device)
+            tasks   = torch.tensor(tasks).to(self.device)
 
             pred_actions = self.model(obs=images,
                                       joint_pos=joint_pos,
-                                      joint_vel=joint_vel)            
+                                      joint_vel=joint_vel,
+                                      task=tasks)            
 
             loss = F.mse_loss(actions, pred_actions)
 
@@ -119,6 +113,9 @@ class Agent:
             loss.backward()
 
             self.optimizer.step()
+            
+            if(epoch % 10 == 0):
+                summary_writer.add_scalar("Loss", loss, epoch)
 
             if(epoch % 100 == 0):
                 print(f"Epoch: {epoch} Loss: {loss.item()}")
@@ -132,12 +129,16 @@ class Agent:
         
         obs, info = self.env.reset()
 
+        task_id = task_index(self.task_description)      # -> array([1]), shape (1,)
+        task_id = torch.tensor(task_id, dtype=torch.long).to(self.device)
+
         while not done:
             image, joint_pos, joint_vel = self.process_observation(obs)
 
             action = self.model(obs=image,
                                joint_pos=joint_pos,
-                               joint_vel=joint_vel)
+                               joint_vel=joint_vel,
+                               task=task_id)
 
             action = action.cpu().detach().numpy().squeeze()
 
