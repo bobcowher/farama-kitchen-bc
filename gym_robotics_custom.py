@@ -1,4 +1,5 @@
 import numpy as np
+import yaml
 from gymnasium import ObservationWrapper, Wrapper, spaces
 import frames
 
@@ -211,3 +212,64 @@ class ArmHomeWrapper(Wrapper):
         print(f"return_to_home gave up after {self.max_steps} steps, "
               f"worst joint still {np.abs(self.home - env.data.qpos[:9]).max():.3f} rad off")
         return observation, self.max_steps
+
+
+class RandomStartWrapper(Wrapper):
+    """Teleports the arm to one of a handful of pre-captured poses at reset.
+
+    reset_model always starts from the same qpos, so a single-start dataset
+    never shows a policy how to recover once it drifts off the one
+    trajectory it was shown -- exactly what stalled the microwave rollout
+    that motivated this. Picking a random, known-good pose from `poses_path`
+    gives demos genuinely different starts without risking the collision a
+    blind random qpos could land in: every pose in the file was reached by
+    driving the real arm there (see scripts/capture_start_poses.py).
+
+    poses_path is YAML, not npy, so a human can read, hand-edit, or
+    rebalance it -- a list of {qpos: [9 floats], frequency: weight}. frequency
+    is a relative sampling weight, not a probability; weights are normalized
+    at load time, so editing one entry's frequency is enough to rebalance,
+    without touching the others.
+
+    Objects are left exactly where reset_model put them; only the 9 arm
+    joints move, and only at episode start. This is a direct qpos write, not
+    a scripted move like ArmHomeWrapper -- nothing has happened yet at this
+    point in the episode, so there's no gripper-through-geometry risk from
+    teleporting.
+    """
+
+    def __init__(self, env, poses_path="start_poses.yaml"):
+        super().__init__(env)
+        with open(poses_path) as f:
+            entries = yaml.safe_load(f)
+        assert entries, f"no poses found in {poses_path}"
+
+        self.poses = np.array([entry["qpos"] for entry in entries], dtype=float)
+        assert self.poses.ndim == 2 and self.poses.shape[1] == 9, (
+            f"expected 9-dim qpos entries in {poses_path}, got shape {self.poses.shape}")
+
+        weights = np.array([entry.get("frequency", 1.0) for entry in entries], dtype=float)
+        self.probs = weights / weights.sum()
+
+    def reset(self, **kwargs):
+        _, info = self.env.reset(**kwargs)
+
+        kitchen = self.unwrapped
+        robot = kitchen.robot_env
+
+        pose = self.poses[np.random.choice(len(self.poses), p=self.probs)]
+        qpos = kitchen.data.qpos.copy()
+        qvel = kitchen.data.qvel.copy()
+        qpos[:9] = pose
+        qvel[:9] = 0.0
+        robot.set_state(qpos, qvel)
+
+        # env.reset() above already rendered once, showing reset_model's
+        # pose -- teleporting afterward leaves that stale frame on screen
+        # until the next env.step() happens to render again. Render now so
+        # the human window (and anyone driving off of it) shows where the
+        # arm actually is, not where it started.
+        kitchen.render()
+
+        robot_obs = robot._get_obs()
+        return kitchen._get_obs(robot_obs), info

@@ -1,6 +1,6 @@
 """Watch a collected demo: the camera frames in a window, the joint states in the CLI.
 
-    python view_run.py dataset/hinge_cabinet/shard_2026_08_06_21_42_43.npz
+    python scripts/view_run.py dataset/hinge_cabinet/shard_2026_08_06_21_42_43.npz
 
 space  play/pause      r  restart      q or Esc  quit
 """
@@ -83,7 +83,10 @@ def main():
             playing = False
             print("-- end of run, press r to restart --")
 
-        key = cv2.waitKeyEx(int(1000 / FPS) if playing else 0)
+        # Masked to the low byte: on Linux, waitKeyEx's raw return can carry
+        # extra high bits (e.g. from NumLock state), so it stops matching
+        # ord('q')/27 and the window can no longer be quit from the keyboard.
+        key = cv2.waitKeyEx(int(1000 / FPS) if playing else 0) & 0xFF
 
         if key in QUIT_KEYS:
             break

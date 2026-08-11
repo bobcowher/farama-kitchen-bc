@@ -13,6 +13,7 @@ torch
 torchvision
 torchaudio
 pygame
+pyyaml
 
 # Not imported anywhere in this project yet.
 pybullet

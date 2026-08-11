@@ -1,11 +1,13 @@
 import time
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import gymnasium as gym
 import gymnasium_robotics  # registers FrankaKitchen-v1; no longer automatic in gymnasium 1.x
 from dataset import DatasetShard
 import frames
 # from agent import Agent
-from gym_robotics_custom import HeldSetpointWrapper, VLAObservationWrapper
+from gym_robotics_custom import HeldSetpointWrapper, VLAObservationWrapper, RandomStartWrapper
 import pygame
 from controller import Controller
 
@@ -42,6 +44,7 @@ if __name__ == '__main__':
     env = gym.make(env_name, max_episode_steps=max_episode_steps, tasks_to_complete=[task], render_mode='human')
 
     env = HeldSetpointWrapper(env)
+    env = RandomStartWrapper(env, poses_path="start_poses.yaml")
     env = VLAObservationWrapper(env, image_size=image_size)
 
     print(f"Observation space: {env.observation_space}")
