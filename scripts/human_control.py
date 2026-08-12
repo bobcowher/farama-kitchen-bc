@@ -35,7 +35,8 @@ if __name__ == '__main__':
         "hinge cabinet": "Open the cabinet second from the left",    # travel 1.15
     }
 
-    task = "microwave"
+    # task = "microwave"
+    task = "hinge cabinet"
     task_description = TASKS[task]
     task_no_spaces = task.replace(" ", "_")
 

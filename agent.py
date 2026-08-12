@@ -46,7 +46,7 @@ class Agent:
                                n_joints=9)
 
         if not eval:
-            self.dataset.load_data(path="dataset/microwave")
+            self.dataset.load_data(path="dataset")
 
         obs, info = self.env.reset() 
 
@@ -121,7 +121,7 @@ class Agent:
                 print(f"Epoch: {epoch} Loss: {loss.item()}")
                 self.model.save_checkpoint()
 
-    def test(self):
+    def test(self, task_description):
 
         self.model.load_checkpoint()
 
@@ -129,7 +129,7 @@ class Agent:
         
         obs, info = self.env.reset()
 
-        task_id = task_index(self.task_description)      # -> array([1]), shape (1,)
+        task_id = task_index(task_description)      # -> array([1]), shape (1,)
         task_id = torch.tensor(task_id, dtype=torch.long).to(self.device)
 
         while not done:

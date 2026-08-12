@@ -3,4 +3,4 @@ import agent
 
 agent = Agent()
 
-agent.train(epochs=10000, batch_size=32)
+agent.train(epochs=10000, batch_size=64)
