@@ -15,6 +15,11 @@ from dataset import Dataset
 from model import Model
 from tasks import TASKS, TASK_DESCRIPTIONS, TASK_NAMES, task_index
 
+# The gripper dims (7 and 8, always identical) carry ~8x the variance of the
+# average arm joint, so an unweighted mean over all 9 hands them 70% of the loss.
+# 0.125 puts the one gripper dof and the seven arm joints on equal footing.
+GRIPPER_WEIGHT = 0.125
+
 class Agent:
 
     def __init__(self, eval=False, data_path="dataset", name='bc_network'):
@@ -106,7 +111,10 @@ class Agent:
                                       joint_vel=joint_vel,
                                       task=tasks)            
 
-            loss = F.mse_loss(actions, pred_actions)
+            arm_loss     = F.mse_loss(actions[:, :7], pred_actions[:, :7])
+            gripper_loss = F.mse_loss(actions[:, 7:], pred_actions[:, 7:])
+
+            loss = arm_loss + GRIPPER_WEIGHT * gripper_loss
 
             self.optimizer.zero_grad()
 
@@ -116,6 +124,8 @@ class Agent:
             
             if(epoch % 10 == 0):
                 summary_writer.add_scalar("train/loss", loss, epoch)
+                summary_writer.add_scalar("train/arm", arm_loss, epoch)
+                summary_writer.add_scalar("train/gripper", gripper_loss, epoch)
 
             if(epoch % 100 == 0):
                 print(f"Epoch: {epoch} Loss: {loss.item()}")

@@ -36,8 +36,8 @@ if __name__ == '__main__':
     }
 
     # task = "microwave"
-    # task = "hinge cabinet"
-    task = "top burner"
+    task = "hinge cabinet"
+    # task = "top burner"
     task_description = TASKS[task]
     task_no_spaces = task.replace(" ", "_")
 

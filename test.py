@@ -4,8 +4,8 @@ import agent
 from tasks import TASKS
 
 
-# task = "microwave"
-task = "hinge cabinet"
+task = "microwave"
+# task = "hinge cabinet"
 task_description = TASKS[task]
 
 agent = Agent(eval=True)
