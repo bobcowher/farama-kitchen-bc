@@ -13,52 +13,42 @@ from torch.utils.tensorboard import SummaryWriter
 
 from dataset import Dataset
 from model import Model
-from tasks import TASKS, TASK_DESCRIPTIONS, TASK_NAMES, task_index
+from tasks import TASKS, TASK_DESCRIPTIONS, task_index
 
 # The gripper dims (7 and 8, always identical) carry ~8x the variance of the
 # average arm joint, so an unweighted mean over all 9 hands them 70% of the loss.
 # 0.125 puts the one gripper dof and the seven arm joints on equal footing.
 GRIPPER_WEIGHT = 0.125
 
+EVAL_TASKS = ["microwave", "hinge cabinet", "top burner"]
+EVAL_ROLLOUTS = 5
+
 class Agent:
 
     def __init__(self, eval=False, data_path="dataset", name='bc_network'):
-        max_episode_steps=500
-        image_size = 448
-        native_image_size = 896 
-        env_name = "FrankaKitchen-v1"
+        self.max_episode_steps = 500
+        self.image_size = 448
+        self.native_image_size = 896
         max_buffer_size = 100000
         learning_rate = 0.0001
 
-        if(eval):
-            render_mode = 'human'
-        else:
-            render_mode = 'rgb_array'
+        env = self._make_env(EVAL_TASKS[0], render_mode='rgb_array')
+        obs, _ = env.reset()
 
-        self.task = "microwave"
-        self.task_description = TASKS[self.task]
-        task_no_spaces = self.task.replace(" ", "_")
-
-        self.env = gym.make(env_name, max_episode_steps=max_episode_steps, tasks_to_complete=[self.task], render_mode=render_mode)
-
-        self.env = HeldSetpointWrapper(self.env)
-        self.env = VLAObservationWrapper(self.env, image_size=native_image_size)
-        self.env = ObsReshapeWrapper(self.env, image_size=image_size)
-
-        self.dataset = Dataset(max_size=max_buffer_size, 
-                               image_size=image_size, 
-                               n_actions=self.env.action_space.shape[0],
+        self.dataset = Dataset(max_size=max_buffer_size,
+                               image_size=self.image_size,
+                               n_actions=env.action_space.shape[0],
                                n_joints=9)
 
         if not eval:
             self.dataset.load_data(path=data_path)
 
-        obs, info = self.env.reset() 
-
         image_input_shape = obs['camera_scene'].shape
         joint_pos_dim     = obs['joint_pos'].shape[0]
         joint_vel_dim     = obs['joint_vel'].shape[0]
-        num_actions       = self.env.action_space.shape[0] 
+        num_actions       = env.action_space.shape[0]
+
+        env.close()
 
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
@@ -73,8 +63,12 @@ class Agent:
 
         self.optimizer = Adam(self.model.parameters(), learning_rate)
 
-        if not eval:
-            self.env.close()
+    def _make_env(self, task, render_mode):
+        env = gym.make("FrankaKitchen-v1", max_episode_steps=self.max_episode_steps,
+                       tasks_to_complete=[task], render_mode=render_mode)
+        env = HeldSetpointWrapper(env)
+        env = VLAObservationWrapper(env, image_size=self.native_image_size)
+        return ObsReshapeWrapper(env, image_size=self.image_size)
 
     def process_observation(self,obs):
         images    = obs['camera_scene']
@@ -130,74 +124,33 @@ class Agent:
             if(epoch % 100 == 0):
                 print(f"Epoch: {epoch} Loss: {loss.item()}")
                 self.model.save_checkpoint()
-                self.eval(epoch, batch_size, summary_writer)
 
-    def eval(self, epoch, batch_size, summary_writer):
-        """Validation loss per task, over every held back step."""
+            if(epoch % 1000 == 0):
+                self.eval(epoch, summary_writer)
+
+    def eval(self, epoch, summary_writer):
+        for task in EVAL_TASKS:
+            rate = sum(self.test(task) for _ in range(EVAL_ROLLOUTS)) / EVAL_ROLLOUTS
+            summary_writer.add_scalar(f"eval/{task.replace(' ', '_')}", rate, epoch)
+            print(f"  eval {task}: {rate:.0%}")
+
+    def test(self, task, render_mode="rgb_array", delay=0):
+        env = self._make_env(task, render_mode)
+        task_id = torch.tensor(task_index(TASKS[task])).to(self.device)
+        obs, _ = env.reset()
+        done = trunc = False
+        total_reward = 0.0
+
         self.model.eval()
-
         with torch.no_grad():
-            for task_id in self.dataset.val_pools:
-                total = 0.0
-                count = 0
-
-                for batch in self.dataset.val_batches(task_id, batch_size):
-                    states, actions, _, _, tasks = batch
-
-                    images, joint_pos, joint_vel = self.process_observation(states)
-                    actions = torch.tensor(actions).to(self.device)
-                    tasks   = torch.tensor(tasks).to(self.device)
-
-                    pred_actions = self.model(obs=images,
-                                              joint_pos=joint_pos,
-                                              joint_vel=joint_vel,
-                                              task=tasks)
-
-                    # Summed, so a short final batch counts for what it holds.
-                    total += F.mse_loss(actions, pred_actions, reduction='sum').item()
-                    count += actions.numel()
-
-                label = TASK_NAMES[task_id].replace(" ", "_")
-                summary_writer.add_scalar(f"eval/{label}", total / count, epoch)
-                print(f"  eval {label}: {total / count:.5f}")
-
+            while not (done or trunc):
+                images, joint_pos, joint_vel = self.process_observation(obs)
+                action = self.model(obs=images, joint_pos=joint_pos,
+                                    joint_vel=joint_vel, task=task_id)
+                obs, reward, done, trunc, _ = env.step(action.cpu().numpy().squeeze())
+                total_reward += reward
+                time.sleep(delay)
         self.model.train()
 
-    def test(self, task_description):
-
-        self.model.load_checkpoint()
-
-        done = False
-        
-        obs, info = self.env.reset()
-
-        task_id = task_index(task_description)
-        task_id = torch.tensor(task_id, dtype=torch.long).to(self.device)
-
-        while not done:
-            image, joint_pos, joint_vel = self.process_observation(obs)
-
-            action = self.model(obs=image,
-                               joint_pos=joint_pos,
-                               joint_vel=joint_vel,
-                               task=task_id)
-
-            action = action.cpu().detach().numpy().squeeze()
-
-            obs, reward, done, trunc, info = self.env.step(action)
-
-            self.env.render()
-
-            print(f"Obs: {obs}")
-            print(f"Reward: {reward}")
-            print(f"Done: {done}")
-            print(f"Info: {info}")
-
-            time.sleep(0.05)
-            
-
-
-
-
-
-
+        env.close()
+        return total_reward > 0

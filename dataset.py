@@ -5,7 +5,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import glob
 import frames
-from tasks import TASK_NAMES, task_index
+from tasks import task_index
 
 # Inflate and resize both release the GIL, so threads scale here where they
 # normally would not. Measured 8x on 32 cores, flat past 16.
@@ -48,9 +48,6 @@ class Dataset():
         self.terminal_memory = np.zeros(self.mem_size, dtype=bool)
         self.task_description_memory = np.zeros(self.mem_size, dtype=object)
         self.task_id_memory = np.zeros(self.mem_size, dtype=np.int64)
-        self.is_val_memory = np.zeros(self.mem_size, dtype=bool)
-        self.train_pool = np.zeros(0, dtype=np.int64)
-        self.val_pools = {}
 
     def __len__(self):
         return self.mem_ctr
@@ -58,13 +55,8 @@ class Dataset():
     def can_sample(self, batch_size):
         return self.mem_ctr >= batch_size
 
-    def load_data(self, path, val_split=0.1, verbose=False):
-        """Load every npz shard under path, recursively.
-
-        val_split holds back whole shards, not random steps: consecutive steps
-        in one episode are near duplicates, so a step level split would leak a
-        near copy of every validation frame into training.
-        """
+    def load_data(self, path, verbose=False):
+        """Load every npz shard under path, recursively."""
         start = time.time()
         print(f"Loading data from {path}...")
 
@@ -73,8 +65,6 @@ class Dataset():
         if not files:
             print(f"No npz files found under {path}")
             return
-
-        is_val_file = self._split(files, val_split)
 
         # Counted first, so an oversized directory fails before anything is written.
         steps_per_file = [len(_open(filename)['action']) for filename in files]
@@ -92,8 +82,8 @@ class Dataset():
         with ThreadPoolExecutor(WORKERS) as pool:
             loaded = pool.map(self._read, files)
 
-            for filename, steps, is_val, (camera, data) in zip(
-                    files, steps_per_file, is_val_file, loaded):
+            for filename, steps, (camera, data) in zip(
+                    files, steps_per_file, loaded):
                 if verbose:
                     print(f"  {filename}: {steps} steps")
 
@@ -107,27 +97,13 @@ class Dataset():
                 description = str(data['task_description'])
                 self.task_description_memory[index:end] = description
                 self.task_id_memory[index:end] = task_index(description)[0]
-                self.is_val_memory[index:end] = is_val
                 index = end
 
         self.mem_ctr = total
 
-        steps = np.arange(total)
-        is_val = self.is_val_memory[:total]
-        task_ids = self.task_id_memory[:total]
-
-        self.train_pool = steps[~is_val]
-        self.val_pools = {int(task_id): steps[is_val & (task_ids == task_id)]
-                          for task_id in np.unique(task_ids)}
-        self.val_pools = {task_id: pool for task_id, pool in self.val_pools.items()
-                          if len(pool)}
-
         elapsed = time.time() - start
 
         print(f"Loaded {self.mem_ctr} steps from {path} in {elapsed:.1f}s")
-        print(f"  {len(self.train_pool)} training steps")
-        for task_id, pool in self.val_pools.items():
-            print(f"  {len(pool)} validation steps for {TASK_NAMES[task_id]}")
 
     def _read(self, filename):
         """Decompress one shard and reduce its frames, on a worker thread.
@@ -144,29 +120,9 @@ class Dataset():
             raise ValueError(f"{filename}: {e}") from None
         return camera, data
 
-    @staticmethod
-    def _split(files, val_split):
-        """Which shards are validation. One bool per file, in the given order.
+    def sample_batch(self, batch_size):
+        batch = np.random.choice(self.mem_ctr, batch_size)
 
-        Counted per task directory so a small task still contributes, at a fixed
-        stride so the same directory always splits the same way.
-        """
-        if not val_split:
-            return [False] * len(files)
-
-        every = round(1 / val_split)
-        seen = {}
-        is_val = []
-
-        for filename in files:
-            task = os.path.dirname(filename)
-            rank = seen.get(task, 0)
-            seen[task] = rank + 1
-            is_val.append(rank % every == every - 1)
-
-        return is_val
-
-    def _batch(self, batch):
         state = {
             # NCHW to match Conv2d. Fancy indexing already made a contiguous HWC
             # copy, so the transpose is a free view over it.
@@ -180,15 +136,6 @@ class Dataset():
                 self.reward_memory[batch],
                 self.terminal_memory[batch],
                 self.task_id_memory[batch])
-
-    def sample_batch(self, batch_size):
-        return self._batch(np.random.choice(self.train_pool, batch_size))
-
-    def val_batches(self, task_id, batch_size):
-        pool = self.val_pools[task_id]
-
-        for start in range(0, len(pool), batch_size):
-            yield self._batch(pool[start:start + batch_size])
 
 
 class DatasetShard():

@@ -16,7 +16,6 @@ TASKS = {
 # Dict order is what task_index()'s integer ids mean, so reordering TASKS
 # silently invalidates every checkpoint trained before the change.
 TASK_DESCRIPTIONS = list(TASKS.values())
-TASK_NAMES = list(TASKS.keys())
 _TASK_INDEX = {description: i for i, description in enumerate(TASK_DESCRIPTIONS)}
 
 
