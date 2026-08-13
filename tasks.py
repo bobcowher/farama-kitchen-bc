@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 
 # The only seven tasks the env accepts; anything else raises at gym.make.
@@ -23,3 +25,11 @@ def task_index(task_descriptions):
     """task_description string, or array of them, -> int64 array of class ids."""
     task_descriptions = np.atleast_1d(task_descriptions)
     return np.array([_TASK_INDEX[d] for d in task_descriptions], dtype=np.int64)
+
+
+def task_from_argv(argv):
+    """Task name from the command line, or exit listing the valid ones."""
+    name = argv[1].replace("_", " ") if len(argv) == 2 else ""
+    if name not in TASKS:
+        sys.exit(f"usage: {argv[0]} <task>\n\ntasks:\n  " + "\n  ".join(TASKS))
+    return name

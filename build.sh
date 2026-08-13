@@ -11,7 +11,7 @@ conda activate farama-kitchen-bc
 
 #pip install -r requirements.txt
 
-# The main script: training. Score a checkpoint with ./eval.py, watch one run
-# with ./test.py -- both take the same conda env this sets up.
+# The main script: training via scripts/train.py. Watch one rollout with
+# ./scripts/test.py, collect demos with ./scripts/human_control.py.
 # python -u ./scripts/human_control.py
-python -u train.py
+python -u scripts/train.py
