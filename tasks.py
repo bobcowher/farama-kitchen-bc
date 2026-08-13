@@ -1,8 +1,8 @@
 import numpy as np
 
 # The only seven tasks the env accepts; anything else raises at gym.make.
-# "travel" is how far past the success threshold the object has to move,
-# so it roughly ranks how long a demo takes.
+# travel is how far past the success threshold the object has to move, which
+# roughly ranks how long a demo takes.
 TASKS = {
     "slide cabinet": "Slide the cabinet door open",              # travel 0.07
     "kettle":        "Move the kettle to the top left burner",   # travel 0.11
@@ -13,14 +13,10 @@ TASKS = {
     "hinge cabinet": "Open the cabinet second from the left",    # travel 1.15
 }
 
-# Fixed order -- this is what task_index()'s integer ids mean. Collection
-# (human_control.py) and training/eval (agent.py) both import it from here so
-# they can't disagree on the mapping.
-#
-# V1 goal conditioning stand-in for real language conditioning: Model embeds
-# this index rather than reading task_description itself. Delete this file
-# and its two call sites when that lands.
+# Dict order is what task_index()'s integer ids mean, so reordering TASKS
+# silently invalidates every checkpoint trained before the change.
 TASK_DESCRIPTIONS = list(TASKS.values())
+TASK_NAMES = list(TASKS.keys())
 _TASK_INDEX = {description: i for i, description in enumerate(TASK_DESCRIPTIONS)}
 
 

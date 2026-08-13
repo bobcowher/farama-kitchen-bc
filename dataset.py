@@ -5,11 +5,10 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import glob
 import frames
-from tasks import task_index
+from tasks import TASK_NAMES, task_index
 
-# Loading is 77% zlib inflate and 23% resize, both of which release the GIL, so
-# threads scale here where they normally would not: 8x on 32 cores, flat past 16
-# workers because the limit is memory bandwidth rather than CPU.
+# Inflate and resize both release the GIL, so threads scale here where they
+# normally would not. Measured 8x on 32 cores, flat past 16.
 WORKERS = min(16, os.cpu_count() or 1)
 
 
@@ -26,28 +25,15 @@ def _open(filename):
 class Dataset():
     """Demonstrations loaded off disk and sampled in batches for behavior cloning.
 
-    Collection is DatasetShard's job; this only reads the shards it wrote.
+    The arenas mirror the observation space in gym_robotics_custom.py, so a
+    policy written against the live env works unchanged on the dataset.
 
-    The arenas mirror the observation space in gym_robotics_custom.py, and
-    sample_batch hands back a dict with those same keys, so a policy written
-    against the live env works unchanged on the dataset. camera_scene comes
-    back as NCHW to match Conv2d, the same as ObsReshapeWrapper gives at
-    rollout; the arena itself stays HWC, which is what the shards hold and what
-    zlib compresses well.
+    load_data raises rather than growing past max_size, so a directory holding
+    more than you planned for is an error instead of a machine that swaps.
 
-    max_size is a declaration of what you expect to load. load_data refuses to
-    exceed it rather than quietly growing, so a directory holding more than you
-    planned for is an error you hear about instead of a machine that swaps.
-
-    Shards are archived at whatever the collector rendered, currently 896, and
-    load_data reduces them to image_size on the way in. image_size must divide
-    the shard width evenly; frames.py explains why. Declaring a smaller arena
-    is the lever that keeps a large dataset in memory: at 896 a step costs
-    2.30 MiB, at 224 it costs 147 KiB, at 128 it costs 48 KiB.
-
-    Load high enough for the encoder you might want later -- 224 is what OpenVLA,
-    pi0 and PaliGemma all take -- and take any further step down per batch.
-    Reducing here is one way; the frames never go back up.
+    Shards are archived at 896 and reduced to image_size on the way in, which is
+    the lever that keeps a large dataset in memory: a step costs 2.30 MiB at 896,
+    147 KiB at 224, 48 KiB at 128.
     """
 
     def __init__(self, max_size, image_size, n_actions, n_joints=9):
@@ -61,6 +47,10 @@ class Dataset():
         self.reward_memory = np.zeros(self.mem_size)
         self.terminal_memory = np.zeros(self.mem_size, dtype=bool)
         self.task_description_memory = np.zeros(self.mem_size, dtype=object)
+        self.task_id_memory = np.zeros(self.mem_size, dtype=np.int64)
+        self.is_val_memory = np.zeros(self.mem_size, dtype=bool)
+        self.train_pool = np.zeros(0, dtype=np.int64)
+        self.val_pools = {}
 
     def __len__(self):
         return self.mem_ctr
@@ -68,12 +58,12 @@ class Dataset():
     def can_sample(self, batch_size):
         return self.mem_ctr >= batch_size
 
-    def load_data(self, path, verbose=False):
+    def load_data(self, path, val_split=0.1, verbose=False):
         """Load every npz shard under path, recursively.
 
-        Shards are concatenated in sorted filename order, so a directory of
-        tasks loads as one mixed set. That is the normal case now that the
-        policy is language conditioned on task_description.
+        val_split holds back whole shards, not random steps: consecutive steps
+        in one episode are near duplicates, so a step level split would leak a
+        near copy of every validation frame into training.
         """
         start = time.time()
         print(f"Loading data from {path}...")
@@ -84,9 +74,9 @@ class Dataset():
             print(f"No npz files found under {path}")
             return
 
-        # First pass counts, so an oversized directory fails before anything is
-        # written. Only the small action array is read here; the frames are read
-        # once, in the fill pass below.
+        is_val_file = self._split(files, val_split)
+
+        # Counted first, so an oversized directory fails before anything is written.
         steps_per_file = [len(_open(filename)['action']) for filename in files]
         total = sum(steps_per_file)
 
@@ -98,12 +88,12 @@ class Dataset():
                 f"of frames) or point at a smaller directory.")
 
         index = 0
-        # map keeps input order, which is what lets the zip below line results
-        # up with the counts from the first pass.
+        # pool.map keeps input order, which is what lines results up with the counts.
         with ThreadPoolExecutor(WORKERS) as pool:
             loaded = pool.map(self._read, files)
 
-            for filename, steps, (camera, data) in zip(files, steps_per_file, loaded):
+            for filename, steps, is_val, (camera, data) in zip(
+                    files, steps_per_file, is_val_file, loaded):
                 if verbose:
                     print(f"  {filename}: {steps} steps")
 
@@ -114,40 +104,72 @@ class Dataset():
                 self.action_memory[index:end] = data['action']
                 self.reward_memory[index:end] = data['reward']
                 self.terminal_memory[index:end] = data['done']
-                self.task_description_memory[index:end] = str(data['task_description'])
+                description = str(data['task_description'])
+                self.task_description_memory[index:end] = description
+                self.task_id_memory[index:end] = task_index(description)[0]
+                self.is_val_memory[index:end] = is_val
                 index = end
 
         self.mem_ctr = total
+
+        steps = np.arange(total)
+        is_val = self.is_val_memory[:total]
+        task_ids = self.task_id_memory[:total]
+
+        self.train_pool = steps[~is_val]
+        self.val_pools = {int(task_id): steps[is_val & (task_ids == task_id)]
+                          for task_id in np.unique(task_ids)}
+        self.val_pools = {task_id: pool for task_id, pool in self.val_pools.items()
+                          if len(pool)}
+
         elapsed = time.time() - start
 
         print(f"Loaded {self.mem_ctr} steps from {path} in {elapsed:.1f}s")
+        print(f"  {len(self.train_pool)} training steps")
+        for task_id, pool in self.val_pools.items():
+            print(f"  {len(pool)} validation steps for {TASK_NAMES[task_id]}")
 
     def _read(self, filename):
-        """Decompress one shard and reduce its frames. Runs on a worker thread.
+        """Decompress one shard and reduce its frames, on a worker thread.
 
-        The resize happens here rather than in the caller so the expensive half
-        is parallel too, and so full-size frames are freed as soon as the
-        reduced copy exists.
+        Resizing here rather than in the caller keeps the expensive half
+        parallel and frees the full-size frames sooner.
         """
         data = _open(filename)
         try:
             camera = frames.resize(data['camera_scene'],
                                    self.camera_scene_memory.shape[1])
         except ValueError as e:
-            # resize only sees an array, so it cannot say which of a few
-            # hundred shards is the odd one out.
+            # resize only sees an array, so it cannot name the odd shard.
             raise ValueError(f"{filename}: {e}") from None
         return camera, data
 
-    def sample_batch(self, batch_size):
-        batch = np.random.choice(self.mem_ctr, batch_size)
+    @staticmethod
+    def _split(files, val_split):
+        """Which shards are validation. One bool per file, in the given order.
 
+        Counted per task directory so a small task still contributes, at a fixed
+        stride so the same directory always splits the same way.
+        """
+        if not val_split:
+            return [False] * len(files)
+
+        every = round(1 / val_split)
+        seen = {}
+        is_val = []
+
+        for filename in files:
+            task = os.path.dirname(filename)
+            rank = seen.get(task, 0)
+            seen[task] = rank + 1
+            is_val.append(rank % every == every - 1)
+
+        return is_val
+
+    def _batch(self, batch):
         state = {
-            # NCHW, because that is the shape Conv2d takes. Fancy indexing has
-            # already made a fresh contiguous HWC copy, so the transpose is a
-            # view over it -- nothing moves, and torch.from_numpy reports the
-            # result channels_last-contiguous, which is the fast layout on GPU.
-            # Storage stays HWC; see the class docstring.
+            # NCHW to match Conv2d. Fancy indexing already made a contiguous HWC
+            # copy, so the transpose is a free view over it.
             "camera_scene": self.camera_scene_memory[batch].transpose(0, 3, 1, 2),
             "joint_pos": self.joint_pos_memory[batch],
             "joint_vel": self.joint_vel_memory[batch],
@@ -157,32 +179,32 @@ class Dataset():
                 self.action_memory[batch],
                 self.reward_memory[batch],
                 self.terminal_memory[batch],
-                # V1 goal conditioning: task ids, not descriptions -- Model
-                # embeds an index (see tasks.py). Revert this line and the
-                # import above to go back to raw task_description strings.
-                task_index(self.task_description_memory[batch]))
+                self.task_id_memory[batch])
+
+    def sample_batch(self, batch_size):
+        return self._batch(np.random.choice(self.train_pool, batch_size))
+
+    def val_batches(self, task_id, batch_size):
+        pool = self.val_pools[task_id]
+
+        for start in range(0, len(pool), batch_size):
+            yield self._batch(pool[start:start + batch_size])
 
 
 class DatasetShard():
     """One collection run's worth of VLA transitions, saved as its own file.
 
-    max_size is a declaration of how long an episode you expect, normally
-    max_episode_steps. Overrunning it raises rather than wrapping, because a
-    shard is a single episode and a ring buffer would corrupt it instead of
-    ageing out old data.
+    Overrunning max_size raises rather than wrapping: a shard is a single
+    episode, and a ring buffer would corrupt it instead of ageing out old data.
 
     Frames go in HWC, straight off the renderer. Do not record through
-    ObsReshapeWrapper -- it hands out NCHW for the model, and the arena would
-    reject the shape.
+    ObsReshapeWrapper -- it hands out NCHW and the arena would reject the shape.
 
-    Frames are stored as raw uint8 RGB and zlib'd by savez_compressed. Measured
-    over 104 microwave demos: 509 KiB per timestep, 59 steps per demo, 3.2 GB.
-    Demo length is what drives the total, not the task count -- microwave is a
-    short one, so scale by the task before trusting an estimate. The arena
-    itself is image_size^2 * 3 * max_size, 1.20 GB at 896x896x500.
+    Measured over 104 microwave demos: 509 KiB per timestep, 59 steps per demo,
+    3.2 GB. Demo length drives the total, not the task count.
 
-    No next_state is stored, in any form. Behavior cloning never reads it, and
-    within a shard it is an exact duplicate of the following row.
+    No next_state is stored. Behavior cloning never reads it, and within a shard
+    it is an exact duplicate of the following row.
     """
 
     def __init__(self, max_size, image_size, n_actions, task_name,
@@ -228,21 +250,15 @@ class DatasetShard():
 
         os.makedirs(directory, exist_ok=True)
 
-        # Filenames are second-resolution, so two saves inside one second would
-        # otherwise overwrite silently. A demo takes far longer than that to
-        # record, so a collision means something is wrong, not that we are fast.
         if os.path.exists(filename):
             raise FileExistsError(
                 f"{filename} already exists. Shard names are second-resolution, "
                 f"so this shard would overwrite one saved in the same second.")
 
-        # Written to a temp name and moved into place, because savez_compressed
-        # takes about a second on a 25 MB shard and the file is an invalid zip
-        # for all of it. os.replace is atomic, so a reader either sees the whole
-        # shard or no file at all -- which makes it safe to load a directory
-        # while a collection run is still appending to it. A killed collector
-        # leaves a visible .tmp rather than a corrupt shard that every future
-        # load_data would die on. load_data globs *.npz, so strays are ignored.
+        # savez_compressed leaves an invalid zip for the ~1s it runs, so write to
+        # a temp name and os.replace it into place. A reader then sees the whole
+        # shard or no file, which makes it safe to load a directory while a
+        # collection run is still appending to it.
         tmp = f'{filename}.tmp'
         with open(tmp, 'wb') as fh:
             np.savez_compressed(fh,

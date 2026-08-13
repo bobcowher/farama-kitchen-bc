@@ -13,13 +13,13 @@ from torch.utils.tensorboard import SummaryWriter
 
 from dataset import Dataset
 from model import Model
-from tasks import TASKS, TASK_DESCRIPTIONS, task_index
+from tasks import TASKS, TASK_DESCRIPTIONS, TASK_NAMES, task_index
 
 class Agent:
 
-    def __init__(self, eval=False):
-        max_episode_steps=500 # max episode steps
-        image_size = 448 
+    def __init__(self, eval=False, data_path="dataset", name='bc_network'):
+        max_episode_steps=500
+        image_size = 448
         native_image_size = 896 
         env_name = "FrankaKitchen-v1"
         max_buffer_size = 100000
@@ -46,7 +46,7 @@ class Agent:
                                n_joints=9)
 
         if not eval:
-            self.dataset.load_data(path="dataset")
+            self.dataset.load_data(path=data_path)
 
         obs, info = self.env.reset() 
 
@@ -62,7 +62,9 @@ class Agent:
                            joint_vel_dim=joint_vel_dim,
                            num_actions=num_actions,
                            task_dim=len(TASK_DESCRIPTIONS),
-                           hidden_dim=512).to(self.device)
+                           hidden_dim=756,
+                           n_hidden_layers=2,
+                           name=name).to(self.device)
 
         self.optimizer = Adam(self.model.parameters(), learning_rate)
 
@@ -74,7 +76,7 @@ class Agent:
         joint_pos = obs['joint_pos']
         joint_vel = obs['joint_vel']
 
-        images    = torch.tensor(images, dtype=torch.float32).to(self.device) / 255 # Normalize
+        images    = torch.tensor(images, dtype=torch.float32).to(self.device) / 255
         joint_pos = torch.tensor(joint_pos, dtype=torch.float32).to(self.device)
         joint_vel = torch.tensor(joint_vel, dtype=torch.float32).to(self.device)
 
@@ -89,8 +91,6 @@ class Agent:
 
     def train(self, epochs, batch_size):
         summary_writer_name = f'runs/{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
-        # summary_writer_name = summary_writer_name + f"_fn={free_nats}_gc={grad_clip}" + summary_writer_label
-        # summary_writer_name = f'{summary_writer_name}'
         summary_writer = SummaryWriter(summary_writer_name)
 
         for epoch in range(epochs):
@@ -115,11 +115,43 @@ class Agent:
             self.optimizer.step()
             
             if(epoch % 10 == 0):
-                summary_writer.add_scalar("Loss", loss, epoch)
+                summary_writer.add_scalar("train/loss", loss, epoch)
 
             if(epoch % 100 == 0):
                 print(f"Epoch: {epoch} Loss: {loss.item()}")
                 self.model.save_checkpoint()
+                self.eval(epoch, batch_size, summary_writer)
+
+    def eval(self, epoch, batch_size, summary_writer):
+        """Validation loss per task, over every held back step."""
+        self.model.eval()
+
+        with torch.no_grad():
+            for task_id in self.dataset.val_pools:
+                total = 0.0
+                count = 0
+
+                for batch in self.dataset.val_batches(task_id, batch_size):
+                    states, actions, _, _, tasks = batch
+
+                    images, joint_pos, joint_vel = self.process_observation(states)
+                    actions = torch.tensor(actions).to(self.device)
+                    tasks   = torch.tensor(tasks).to(self.device)
+
+                    pred_actions = self.model(obs=images,
+                                              joint_pos=joint_pos,
+                                              joint_vel=joint_vel,
+                                              task=tasks)
+
+                    # Summed, so a short final batch counts for what it holds.
+                    total += F.mse_loss(actions, pred_actions, reduction='sum').item()
+                    count += actions.numel()
+
+                label = TASK_NAMES[task_id].replace(" ", "_")
+                summary_writer.add_scalar(f"eval/{label}", total / count, epoch)
+                print(f"  eval {label}: {total / count:.5f}")
+
+        self.model.train()
 
     def test(self, task_description):
 
@@ -129,7 +161,7 @@ class Agent:
         
         obs, info = self.env.reset()
 
-        task_id = task_index(task_description)      # -> array([1]), shape (1,)
+        task_id = task_index(task_description)
         task_id = torch.tensor(task_id, dtype=torch.long).to(self.device)
 
         while not done:
