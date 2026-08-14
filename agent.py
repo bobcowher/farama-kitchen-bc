@@ -1,3 +1,11 @@
+import os
+
+# MuJoCo picks its GL backend at import time and defaults to GLFW, which needs
+# an X display. Headless training servers have none, so fall back to EGL there.
+# setdefault, so the environment can still override.
+if not os.environ.get("DISPLAY"):
+    os.environ.setdefault("MUJOCO_GL", "egl")
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -90,6 +98,7 @@ class Agent:
 
     def train(self, epochs, batch_size):
         summary_writer_name = f'runs/{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
+        summary_writer_name = summary_writer_name + f"_bs={batch_size}"
         summary_writer = SummaryWriter(summary_writer_name)
 
         for epoch in range(epochs):

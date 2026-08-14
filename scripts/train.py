@@ -9,4 +9,4 @@ agent = Agent(data_path="dataset", name="bc_network")
 # epochs = 10001
 epochs = 100001
 
-agent.train(epochs=epochs, batch_size=32)
+agent.train(epochs=epochs, batch_size=64)
