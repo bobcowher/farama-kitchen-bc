@@ -33,7 +33,8 @@ EVAL_ROLLOUTS = 3
 
 class Agent:
 
-    def __init__(self, eval=False, data_path="dataset", name='bc_network'):
+    def __init__(self, eval=False, data_path="dataset", name='bc_network',
+                 hidden_dim=756, n_hidden_layers=2):
         self.max_episode_steps = 400  # longest demo on file is 314; a policy still going at 400 has failed
         self.image_size = 448
         self.native_image_size = 896
@@ -65,8 +66,8 @@ class Agent:
                            joint_vel_dim=joint_vel_dim,
                            num_actions=num_actions,
                            task_dim=len(TASK_DESCRIPTIONS),
-                           hidden_dim=756,
-                           n_hidden_layers=2,
+                           hidden_dim=hidden_dim,
+                           n_hidden_layers=n_hidden_layers,
                            name=name).to(self.device)
 
         self.optimizer = Adam(self.model.parameters(), learning_rate)
@@ -97,7 +98,7 @@ class Agent:
 
 
     def train(self, epochs, batch_size):
-        summary_writer_name = f'runs/{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
+        summary_writer_name = f'runs/{self.model.name}_{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
         summary_writer_name = summary_writer_name + f"_bs={batch_size}"
         summary_writer = SummaryWriter(summary_writer_name)
 
