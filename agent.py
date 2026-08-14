@@ -21,12 +21,12 @@ from tasks import TASKS, TASK_DESCRIPTIONS, task_index
 GRIPPER_WEIGHT = 0.125
 
 EVAL_TASKS = ["microwave", "hinge cabinet", "top burner"]
-EVAL_ROLLOUTS = 5
+EVAL_ROLLOUTS = 3
 
 class Agent:
 
     def __init__(self, eval=False, data_path="dataset", name='bc_network'):
-        self.max_episode_steps = 500
+        self.max_episode_steps = 400  # longest demo on file is 314; a policy still going at 400 has failed
         self.image_size = 448
         self.native_image_size = 896
         max_buffer_size = 100000
@@ -125,7 +125,7 @@ class Agent:
                 print(f"Epoch: {epoch} Loss: {loss.item()}")
                 self.model.save_checkpoint()
 
-            if(epoch % 1000 == 0):
+            if(epoch and epoch % 1000 == 0):
                 self.eval(epoch, summary_writer)
 
     def eval(self, epoch, summary_writer):

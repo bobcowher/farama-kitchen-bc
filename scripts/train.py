@@ -6,4 +6,7 @@ from agent import Agent
 # agent = Agent(data_path="dataset/microwave", name="bc_microwave")
 agent = Agent(data_path="dataset", name="bc_network")
 
-agent.train(epochs=10000, batch_size=32)
+# epochs = 10001
+epochs = 100001
+
+agent.train(epochs=epochs, batch_size=32)
