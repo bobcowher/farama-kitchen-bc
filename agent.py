@@ -66,7 +66,7 @@ class Agent:
                            num_actions=num_actions,
                            task_dim=len(TASK_DESCRIPTIONS),
                            hidden_dim=756,
-                           n_hidden_layers=2,
+                           n_hidden_layers=3,
                            name=name).to(self.device)
 
         self.optimizer = Adam(self.model.parameters(), learning_rate)
