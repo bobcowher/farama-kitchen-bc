@@ -7,7 +7,7 @@ from agent import Agent
 # overrides these lines; everything else is shared sweep infrastructure.
 HIDDEN_DIM = 756
 N_HIDDEN_LAYERS = 2
-USE_LAYER_NORM = False
+USE_LAYER_NORM = True
 
 epochs = 10001
 # epochs = 100001
