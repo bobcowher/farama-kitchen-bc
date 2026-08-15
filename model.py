@@ -18,9 +18,10 @@ class Model(nn.Module):
                  task_dim,
                  num_actions, 
                  hidden_dim,
-                 compression_dim=None, 
+                 compression_dim=None,
                  n_hidden_layers=1,
-                 checkpoint_dir='checkpoints', 
+                 use_layer_norm=False,
+                 checkpoint_dir='checkpoints',
                  name='bc_network'):
         super(Model, self).__init__()
 
@@ -55,6 +56,14 @@ class Model(nn.Module):
             [nn.Linear(hidden_dim, hidden_dim) for _ in range(n_hidden_layers)]
         )
 
+        # Optional per-layer LayerNorm, applied Linear -> LayerNorm -> ReLU.
+        # Off by default so existing checkpoints keep loading unchanged.
+        self.use_layer_norm = use_layer_norm
+        if use_layer_norm:
+            self.hidden_norms = nn.ModuleList(
+                [nn.LayerNorm(hidden_dim) for _ in range(n_hidden_layers)]
+            )
+
         self.output = nn.Linear(hidden_dim, num_actions)
 
         self.name = name
@@ -86,8 +95,11 @@ class Model(nn.Module):
 
         x = F.relu(self.compression_layer(x))
 
-        for layer in self.hidden_layers:
-            x = F.relu(layer(x))
+        for i, layer in enumerate(self.hidden_layers):
+            x = layer(x)
+            if self.use_layer_norm:
+                x = self.hidden_norms[i](x)
+            x = F.relu(x)
 
         x = F.tanh(self.output(x))
         # # x = F.tanh(self.out)

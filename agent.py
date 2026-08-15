@@ -34,7 +34,7 @@ EVAL_ROLLOUTS = 3
 class Agent:
 
     def __init__(self, eval=False, data_path="dataset", name='bc_network',
-                 hidden_dim=756, n_hidden_layers=2):
+                 hidden_dim=756, n_hidden_layers=2, use_layer_norm=False):
         self.max_episode_steps = 400  # longest demo on file is 314; a policy still going at 400 has failed
         self.image_size = 448
         self.native_image_size = 896
@@ -68,6 +68,7 @@ class Agent:
                            task_dim=len(TASK_DESCRIPTIONS),
                            hidden_dim=hidden_dim,
                            n_hidden_layers=n_hidden_layers,
+                           use_layer_norm=use_layer_norm,
                            name=name).to(self.device)
 
         self.optimizer = Adam(self.model.parameters(), learning_rate)
