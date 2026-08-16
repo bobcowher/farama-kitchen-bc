@@ -53,7 +53,6 @@ class Agent:
 
         image_input_shape = obs['camera_scene'].shape
         joint_pos_dim     = obs['joint_pos'].shape[0]
-        joint_vel_dim     = obs['joint_vel'].shape[0]
         num_actions       = env.action_space.shape[0]
 
         env.close()
@@ -62,7 +61,6 @@ class Agent:
 
         self.model = Model(image_input_shape=image_input_shape,
                            joint_pos_dim=joint_pos_dim,
-                           joint_vel_dim=joint_vel_dim,
                            num_actions=num_actions,
                            task_dim=len(TASK_DESCRIPTIONS),
                            hidden_dim=756,
@@ -111,7 +109,6 @@ class Agent:
 
             pred_actions = self.model(obs=images,
                                       joint_pos=joint_pos,
-                                      joint_vel=joint_vel,
                                       task=tasks)            
 
             arm_loss     = F.mse_loss(actions[:, :7], pred_actions[:, :7])
@@ -155,7 +152,7 @@ class Agent:
             while not (done or trunc):
                 images, joint_pos, joint_vel = self.process_observation(obs)
                 action = self.model(obs=images, joint_pos=joint_pos,
-                                    joint_vel=joint_vel, task=task_id)
+                                    task=task_id)
                 obs, reward, done, trunc, _ = env.step(action.cpu().numpy().squeeze())
                 total_reward += reward
                 time.sleep(delay)
