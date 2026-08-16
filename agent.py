@@ -35,7 +35,7 @@ class Agent:
 
     def __init__(self, eval=False, data_path="dataset", name='bc_network'):
         self.max_episode_steps = 400  # longest demo on file is 314; a policy still going at 400 has failed
-        self.image_size = 448
+        self.image_size = 224
         self.native_image_size = 896
         max_buffer_size = 100000
         learning_rate = 0.0001
