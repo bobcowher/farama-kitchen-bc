@@ -52,7 +52,6 @@ class Agent:
             self.dataset.load_data(path=data_path)
 
         image_input_shape = obs['camera_scene'].shape
-        joint_pos_dim     = obs['joint_pos'].shape[0]
         joint_vel_dim     = obs['joint_vel'].shape[0]
         num_actions       = env.action_space.shape[0]
 
@@ -61,7 +60,6 @@ class Agent:
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
         self.model = Model(image_input_shape=image_input_shape,
-                           joint_pos_dim=joint_pos_dim,
                            joint_vel_dim=joint_vel_dim,
                            num_actions=num_actions,
                            task_dim=len(TASK_DESCRIPTIONS),
@@ -110,7 +108,6 @@ class Agent:
             tasks   = torch.tensor(tasks).to(self.device)
 
             pred_actions = self.model(obs=images,
-                                      joint_pos=joint_pos,
                                       joint_vel=joint_vel,
                                       task=tasks)            
 
@@ -154,8 +151,8 @@ class Agent:
         with torch.no_grad():
             while not (done or trunc):
                 images, joint_pos, joint_vel = self.process_observation(obs)
-                action = self.model(obs=images, joint_pos=joint_pos,
-                                    joint_vel=joint_vel, task=task_id)
+                action = self.model(obs=images, joint_vel=joint_vel,
+                                    task=task_id)
                 obs, reward, done, trunc, _ = env.step(action.cpu().numpy().squeeze())
                 total_reward += reward
                 time.sleep(delay)
