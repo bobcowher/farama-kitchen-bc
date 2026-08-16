@@ -29,9 +29,32 @@ class Model(nn.Module):
         if compression_dim is None:
             compression_dim = hidden_dim
 
-        self.conv1 = nn.Conv2d(image_input_shape[0], 32, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        # Six stride-2 stages, halving the frame each time and doubling channels
+        # on the way down: 448 -> 224 -> 112 -> 56 -> 28 -> 14 -> 7.
+        #
+        # The previous stack was Nature-DQN's, built for 84x84. Its kernels and
+        # strides are fixed, so feeding it 448 left the receptive field at 36x36
+        # -- 18% of an 84px frame but 0.6% of this one, about the size of the
+        # gripper fingertips. No conv feature could see the arm and its target at
+        # once, and it stopped downsampling at 52x52, so the flatten that follows
+        # was Linear(173056, 756): 130.8M params, 97.6% of the whole model, doing
+        # the spatial reasoning the convs never did. Going deeper takes the
+        # receptive field to 131x131 and the grid to 7x7, which shrinks that
+        # layer ~7x and moves capacity into the part that actually looks.
+        #
+        # GroupNorm rather than BatchNorm: rollouts run this at batch size 1 with
+        # .eval(), which is where BatchNorm's running statistics bite.
+        channels = [image_input_shape[0], 32, 64, 128, 256, 256, 512]
+        stages = []
+        for i, (c_in, c_out) in enumerate(zip(channels, channels[1:])):
+            # A wider kernel on the stem only; 448px of raw pixels is more than a
+            # 3x3 can usefully summarize, and it is cheap at 3 input channels.
+            kernel = 7 if i == 0 else 3
+            stages += [nn.Conv2d(c_in, c_out, kernel_size=kernel, stride=2,
+                                 padding=kernel // 2),
+                       nn.GroupNorm(8, c_out),
+                       nn.ReLU()]
+        self.conv = nn.Sequential(*stages)
 
         with torch.no_grad():
             dummy = torch.zeros(1, *image_input_shape)
@@ -67,10 +90,7 @@ class Model(nn.Module):
 
 
     def _conv_forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
-        return x.flatten(1)
+        return self.conv(x).flatten(1)
 
     def forward(self, obs, joint_pos, joint_vel, task):
         x_image = self._conv_forward(obs)
