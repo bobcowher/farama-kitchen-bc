@@ -13,7 +13,6 @@ def weights_init_(m):
 
 class Model(nn.Module):
     def __init__(self, image_input_shape, 
-                 joint_pos_dim, 
                  task_dim,
                  num_actions, 
                  hidden_dim,
@@ -62,18 +61,18 @@ class Model(nn.Module):
         # We want the total compression dim to be the joint information, for gut feeling reasons. 
         compression_dim_small = compression_dim // 2
 
-        # Ablation: joint_vel is deliberately absent, the mirror of the
-        # no-joint-pos run. Velocity was in here to stand in for history -- with
-        # a single frame, it is the only thing saying which way the arm was
-        # already moving. This asks whether that is worth its place, given that
-        # ALOHA/ACT and pi0 both condition on joint position alone.
-        self.joint_pos_input = nn.Linear(joint_pos_dim, compression_dim_small)
-        self.task_input      = nn.Embedding(task_dim, compression_dim_small)
+        # Ablation: no proprioception at all. The no-joint-vel run took velocity
+        # out; this one takes position with it, leaving the frame and the task id
+        # as the entire input. Each earlier ablation left one proprioceptive
+        # channel behind, so neither could say whether the policy was locating
+        # its target visually or still reading the arm off a vector. With both
+        # gone there is nowhere else for the answer to come from.
+        self.task_input = nn.Embedding(task_dim, compression_dim_small)
 
 
         self.image_input = nn.Linear(flat_size, compression_dim)
 
-        self.compression_layer = nn.Linear(compression_dim + (compression_dim_small * 2), hidden_dim)
+        self.compression_layer = nn.Linear(compression_dim + compression_dim_small, hidden_dim)
 
         # n_hidden_layers hidden FC layers between fusion and output.
         # n_hidden_layers=1 reproduces the original single `linear1`.
@@ -95,16 +94,15 @@ class Model(nn.Module):
     def _conv_forward(self, x):
         return self.conv(x).flatten(1)
 
-    def forward(self, obs, joint_pos, task):
+    def forward(self, obs, task):
         x_image = self._conv_forward(obs)
         x_image = F.relu(self.image_input(x_image))
 
-        x_joint_pos = F.relu(self.joint_pos_input(joint_pos))
-        x_task      = F.relu(self.task_input(task))
+        x_task = F.relu(self.task_input(task))
 
         # x_task = self.task_input(task_id)
 
-        x = torch.cat([x_image, x_joint_pos, x_task], dim=1)
+        x = torch.cat([x_image, x_task], dim=1)
 
         x = F.relu(self.compression_layer(x))
 
