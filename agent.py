@@ -29,7 +29,11 @@ from tasks import TASKS, TASK_DESCRIPTIONS, task_index
 GRIPPER_WEIGHT = 0.125
 
 EVAL_TASKS = ["microwave", "hinge cabinet", "top burner"]
-EVAL_ROLLOUTS = 3
+# 3 rollouts made a perfect eval cheap luck: a policy with a true 90% per-task
+# rate reads 9/9 on 39 evals out of 100, so nothing downstream could tell a
+# good checkpoint from a lucky one. 20 rollouts every 5000 epochs costs about
+# the same in total and drops the per-task standard error from ~17pp to ~5pp.
+EVAL_ROLLOUTS = 20
 
 class Agent:
 
@@ -128,7 +132,7 @@ class Agent:
                 print(f"Epoch: {epoch} Loss: {loss.item()}")
                 self.model.save_checkpoint()
 
-            if(epoch and epoch % 1000 == 0):
+            if(epoch and epoch % 5000 == 0):
                 self.eval(epoch, summary_writer)
 
     def eval(self, epoch, summary_writer):
@@ -136,6 +140,12 @@ class Agent:
             rate = sum(self.test(task) for _ in range(EVAL_ROLLOUTS)) / EVAL_ROLLOUTS
             summary_writer.add_scalar(f"eval/{task.replace(' ', '_')}", rate, epoch)
             print(f"  eval {task}: {rate:.0%}")
+
+        # The rolling checkpoint is whatever epoch training stopped on, which is
+        # an arbitrary point in a trajectory that is still moving at 100K. Keep a
+        # copy at every eval so the run's last checkpoints can be compared
+        # against each other afterwards instead of trusting the final one.
+        torch.save(self.model.state_dict(), f"{self.model.checkpoint_file}.e{epoch}")
 
     def test(self, task, render_mode="rgb_array", delay=0):
         env = self._make_env(task, render_mode)
